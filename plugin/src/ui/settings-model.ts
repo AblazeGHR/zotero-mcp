@@ -2,6 +2,7 @@
 // `host.setSettings`. No DOM, so the save paths are unit-tested against the fake host.
 import type { BackendId, Catalog, ModeOption, PanelSettings, PromptEntry } from "../types.ts";
 import { t } from "../i18n.ts";
+import { isCustomBackend } from "../custom-agent.ts";
 import type { Key } from "../i18n.ts";
 
 /** Friendly one-liners for the permission modes we know; anything else shows the catalog's own words. */
@@ -11,7 +12,7 @@ const MODE_HELP: Record<string, Key> = {
   build: "mode.build",
 };
 /** Backends with no subscription or API key of ours: they run on the providers set up in the agent itself. */
-export const ownProviders = (b: BackendId): boolean => b === "pi" || b === "opencode";
+export const ownProviders = (b: BackendId): boolean => b === "pi" || b === "opencode" || isCustomBackend(b);
 
 export const modeHelp = (m: ModeOption): string => (MODE_HELP[m.id] ? t(MODE_HELP[m.id]!) : m.description ?? "");
 

@@ -1,6 +1,7 @@
 // The panel's other screens: the empty state, history, settings, and the doctor/status view.
 // Each is a plain function returning an element and a `refresh` where it has data to reload.
-import type { BackendId, DoctorCheck, PanelHost, SavedSession } from "../types.ts";
+import type { BackendId, DoctorCheck, PanelHost, PanelSettings, SavedSession } from "../types.ts";
+import { customAgentIds, isCustomBackend, isCustomProfile } from "../custom-agent.ts";
 import { cleanTitle, copyText, dayGroup, env, errMessage, flashCheck, h, icon, isMac, relTime, setKids, slotLabel, svg } from "./dom.ts";
 import { shortPath } from "./settings-model.ts";
 import { skillLabel } from "./skills-model.ts";
@@ -9,8 +10,11 @@ import type { Key } from "../i18n.ts";
 import type { Pinned } from "./skills-model.ts";
 
 // Product names stay as they are; "Custom" is a word, so it is looked up each time it is drawn.
-export const BACKEND_LABEL: Record<BackendId, string> = { "claude-code": "Claude Code", codex: "Codex", pi: "pi", opencode: "OpenCode", get custom() { return t("agent.custom.tab"); } };
-export const BACKENDS: BackendId[] = ["claude-code", "codex", "pi", "opencode", "custom"];
+export const BACKEND_LABEL = { "claude-code": "Claude Code", codex: "Codex", pi: "pi", opencode: "OpenCode", get custom() { return t("agent.custom.tab"); } };
+export const BACKENDS = ["claude-code", "codex", "pi", "opencode"] as const;
+export const backendIds = (settings: PanelSettings): BackendId[] => [...BACKENDS, ...customAgentIds(settings.customAgents)];
+export const backendLabel = (settings: PanelSettings, id: BackendId): string =>
+  isCustomProfile(id) ? settings.customAgents?.[id]?.label || t("agent.custom.label") : BACKEND_LABEL[id];
 
 /**
  * The logo (assets/logo.svg): a hollow square chat box with a small tail, and a red Z in it (--brand: the accent setting never recolours it). It follows the theme. The parts
@@ -109,8 +113,8 @@ export function frame(title: string, back: () => void, ...body: (HTMLElement | n
 
 // ───────────────────────────── history ─────────────────────────────
 
-function copySessionIdButton(id: string): HTMLElement {
-  const label = t("sessionId.copy");
+function copySessionIdButton(id: string, agent: string): HTMLElement {
+  const label = t("sessionId.copy", { agent });
   const button = h("button.iconbtn.iconbtn--sm.session-id-copy", {
     type: "button", title: label, "aria-label": label,
     onclick: async () => { if (await copyText(id)) flashCheck(button); },
@@ -192,13 +196,14 @@ export function historyView(host: PanelHost, o: { current(): string | null; back
       }
       const cmd = host.resumeCommand(s);
       const done = copied === s.id;
+      const agent = backendLabel(host.getSettings(), s.backend);
       out.push(h(`div.hrow${isCur ? ".hrow--on" : ""}`, null,
         h("button.hrow__main", { type: "button", onclick: () => o.resume(s), ...(isCur ? { "aria-current": "true" } : {}) },
           h("span.hrow__t", null, s.title || t("history.untitled")),
-          h("span.hrow__m", null, `${BACKEND_LABEL[s.backend] ?? s.backend} · ${relTime(s.updatedAt)}`),
+          h("span.hrow__m", null, `${agent} · ${relTime(s.updatedAt)}`),
           s.cwd ? h("span.hrow__f", { title: s.cwd }, icon("folder"), h("span", null, shortPath(s.cwd, 30))) : null),
         cmd ? h(`button.${done ? "lnk.hrow__copied" : "iconbtn.iconbtn.iconbtn--sm.hrow__cmd"}`, { type: "button", title: t("history.copyCmd"), "aria-label": done ? t("common.copied") : t("history.copyCmdFor", { title: s.title || t("history.chat") }), onclick: () => void copyCmd(s, cmd) }, icon(done ? "check" : "terminal"), done ? t("common.copied") : null) : null,
-        s.backend === "codex" && s.agentSessionId ? copySessionIdButton(s.agentSessionId) : null,
+        (s.backend === "codex" || isCustomBackend(s.backend)) && s.agentSessionId ? copySessionIdButton(s.agentSessionId, agent) : null,
         h("button.iconbtn.iconbtn--sm.hrow__ren", { type: "button", "aria-label": t("history.renameFor", { title: s.title || t("history.chat") }), title: t("history.rename"), onclick: () => { renaming = s.id; renameDraft = s.title; paint(); env.win.setTimeout(() => (list.querySelector(".hrow__edit") as HTMLInputElement | null)?.select(), 0); } }, icon("pencil")),
         h("button.iconbtn.iconbtn--sm.hrow__del", { type: "button", "aria-label": t("history.deleteFor", { title: s.title || t("history.chat") }), title: t("common.delete"), onclick: () => { confirming = s.id; paint(); } }, icon("trash"))));
     }
@@ -225,22 +230,22 @@ export function historyView(host: PanelHost, o: { current(): string | null; back
 
 // ───────────────────────────── status (the doctor) ─────────────────────────────
 
-export function statusView(host: PanelHost, o: { back(): void; changed(checks: DoctorCheck[]): void; openSettings(): void; initial: DoctorCheck[] | null; codexSessionId(): string | null }): { el: HTMLElement; refresh(): void; render(): void } {
+export function statusView(host: PanelHost, o: { back(): void; changed(checks: DoctorCheck[]): void; openSettings(): void; initial: DoctorCheck[] | null; currentSession(): { id: string; agent: string } | null }): { el: HTMLElement; refresh(): void; render(): void } {
   const session = h("div.check.status__session", { hidden: true });
   const list = h("div.checks", null, session);
   const sum = h("div.status__sum", { role: "status" });
   let busy = false;
   const logs = new Map<string, string>();
-  let shownId: string | null | undefined;
+  let shown: { id: string; agent: string } | null | undefined;
   const render = () => {
-    const id = o.codexSessionId();
-    if (id === shownId) return;
-    shownId = id;
-    session.hidden = id === null;
-    setKids(session, id === null ? null : h("div.check__tx", null,
-      h("div.check__t", null, t("sessionId.title")),
-      h("div.check__d.status__session-id", { dir: id ? "ltr" : "auto" }, id || t("sessionId.pending"))),
-      id ? copySessionIdButton(id) : null);
+    const current = o.currentSession();
+    if (current?.id === shown?.id && current?.agent === shown?.agent && shown !== undefined) return;
+    shown = current;
+    session.hidden = current === null;
+    setKids(session, current ? h("div.check__tx", null,
+      h("div.check__t", null, t("sessionId.title", { agent: current.agent })),
+      h("div.check__d.status__session-id", { dir: current.id ? "ltr" : "auto" }, current.id || t("sessionId.pending"))) : null,
+      current?.id ? copySessionIdButton(current.id, current.agent) : null);
   };
 
   const paint = (checks: DoctorCheck[]) => {

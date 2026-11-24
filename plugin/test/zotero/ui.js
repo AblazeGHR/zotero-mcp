@@ -55,7 +55,7 @@ async function main(ctx) {
   modelBtn.click();
   await ctx.waitFor(() => $(".mdd .eff__track"), "the dropdown rendered its effort slider (not stuck on Loading)");
   // The four built-in agents plus the user-configured one (#813).
-  check($$(".mdd__agent").length === 5 && $$(".mdd__agent").some((a) => a.dataset.id === "custom") && $(".mdd__agent--on")?.dataset.id === "claude-code", "the five agents, Claude Code chosen: " + $$(".mdd__agent").map((a) => a.dataset.id).join(","));
+  check($$(".mdd__agent").length === 4 && $(".mdd__agent--on")?.dataset.id === "claude-code", "the built-in agents, Claude Code chosen: " + $$(".mdd__agent").map((a) => a.dataset.id).join(","));
   check($$('.mdd [role="menuitemradio"]').length >= 1, "the models are listed");
   const md = $(".mdd").getBoundingClientRect(), mb = modelBtn.getBoundingClientRect();
   check(md.bottom <= mb.top + 1 && md.left >= $(".composer").getBoundingClientRect().left - 1, "the dropdown sits above its button");

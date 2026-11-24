@@ -46,7 +46,15 @@ export function createSettingsHost(opts: { version: string; win: any; dataDir: s
   // Everything but the runtime, which the panel and the pane each bring.
   const host: Omit<SettingsHost, "runtime"> = {
     getSettings: settings,
-    async setSettings(patch) { write(JSON.stringify({ ...prefs.json("settings", {}), ...patch })); },
+    async setSettings(patch) {
+      const raw = prefs.json<Partial<PanelSettings>>("settings", {});
+      if (raw.customAgent) {
+        const { backend, customAgents, model, mode, effort } = settings();
+        delete raw.customAgent;
+        Object.assign(raw, { backend, customAgents, model, mode, effort });
+      }
+      write(JSON.stringify({ ...raw, ...patch }));
+    },
     async resetSettings() { write(""); await images.remove(); },
     setApiKey: keychain.setApiKey,
     hasApiKey: async (b: BackendId) => !!(await keychain.getApiKey(b)),

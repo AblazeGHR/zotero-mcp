@@ -132,7 +132,7 @@ async function handle(msg) {
       if (process.env.MOCK_INIT === "hang") return;
       return reply({
         protocolVersion: process.env.MOCK_INIT === "badversion" ? 99 : 1,
-        agentCapabilities: { loadSession: true, promptCapabilities: { image: variant !== "pi" || true, embeddedContext: true } },
+        agentCapabilities: { loadSession: process.env.MOCK_LOAD !== "unsupported", promptCapabilities: { image: variant !== "pi" || true, embeddedContext: true } },
         agentInfo: { name: "mock-acp", version: "0.0.0" },
         authMethods: [],
       });

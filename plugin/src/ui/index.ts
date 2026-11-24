@@ -17,7 +17,8 @@ import { answerNote } from "./notes.ts";
 import { answerText, promptFor } from "./transcript.ts";
 import { settingsView } from "./settings.ts";
 import { ownProviders } from "./settings-model.ts";
-import { BACKEND_LABEL, BACKENDS, emptyState, historyView, setupCard, statusView } from "./views.ts";
+import { backendIds, backendLabel, emptyState, historyView, setupCard, statusView } from "./views.ts";
+import { isCustomBackend, isCustomProfile } from "../custom-agent.ts";
 import { welcomeView } from "./welcome.ts";
 import { enabledSkills, invocationText, parseInvocation, pinned, skillPath } from "./skills-model.ts";
 import { resolveLanguage, setLanguage, t } from "../i18n.ts";
@@ -209,7 +210,10 @@ class Panel {
     const screen =
       v === "history" ? historyView(host, { current: () => this.chat.saved?.id ?? null, back, resume: (s) => void this.openSaved(s), deleted: (id) => { if (this.chat.saved?.id === id) void this.newChat(); }, renamed: (s) => this.chat.adoptRename(s.id, s.title) })
       : v === "welcome" ? welcomeView(host, this.health, { done: () => void this.finishWelcome(), recheck: () => void this.health.refresh(), changed: () => this.onSettings(), openSettings: () => this.show("settings") })
-      : v === "status" ? statusView(host, { back, initial: this.health.checks, codexSessionId: () => this.chat.codexSessionId, openSettings: () => this.show("settings"), changed: (c) => this.health.set(c) })
+      : v === "status" ? statusView(host, { back, initial: this.health.checks, currentSession: () => {
+        const id = this.chat.visibleSessionId;
+        return id === null ? null : { id, agent: backendLabel(host.getSettings(), this.chat.backend) };
+      }, openSettings: () => this.show("settings"), changed: (c) => this.health.set(c) })
       : settingsView(host, { back, statuses: () => this.health.statuses, refreshStatuses: () => void this.health.refreshStatuses().then(() => this.activeView?.render?.()), changed: () => this.onSettings(), cleared: () => this.onCleared(), look: this.look,
         createSkill: () => void this.newChat().then(() => { this.composer.setText("/create-skill "); this.composer.focus(); }) });
     this.activeView = screen;
@@ -314,7 +318,8 @@ class Panel {
     const st = this.health.backend();
     this.statusBtn.dataset.state = this.health.state;
     // Say plainly who pays: a subscription's account name, or "API key". pi and OpenCode have neither: they use the providers set up in them.
-    const label = s.backend === "custom" ? s.customAgent?.label || t("agent.custom.label") : ownProviders(s.backend) ? BACKEND_LABEL[s.backend] : s.auth[s.backend] === "api-key" ? t("header.apiKey", { agent: BACKEND_LABEL[s.backend] }) : st?.account || t("header.subscription", { agent: BACKEND_LABEL[s.backend] });
+    const name = backendLabel(s, s.backend);
+    const label = ownProviders(s.backend) ? name : s.auth[s.backend] === "api-key" ? t("header.apiKey", { agent: name }) : st?.account || t("header.subscription", { agent: name });
     this.accountEl.textContent = label;
     const bad = this.health.failing;
     const tip = { ok: t("status.allSet"), checking: t("common.checking"), unknown: t("header.statusUnknown"), warn: "", bad: "" }[this.health.state] || bad.map((c) => c.label).join(", ");
@@ -343,7 +348,7 @@ class Panel {
   /** The agent, how it signs in, a custom agent's command and the folder chats run in. */
   private readAgentKey(): string {
     const s = this.host.getSettings();
-    return JSON.stringify([s.backend, s.auth, s.customAgent ?? null, s.chatFolder]);
+    return JSON.stringify([s.backend, s.auth, isCustomProfile(s.backend) ? s.customAgents?.[s.backend]?.revision : null, s.chatFolder]);
   }
 
   private onSettings(): void {
@@ -353,7 +358,7 @@ class Panel {
     const key = this.readAgentKey();
     if (key !== this.agentKey) {
       this.agentKey = key;
-      this.catalogs.delete("custom");
+      for (const id of this.catalogs.keys()) if (isCustomBackend(id)) this.catalogs.delete(id);
       // An empty chat has no history to protect: a changed agent takes effect at once, also over a session still starting
       // (the panel starts one as soon as it opens, and that one was for the agent chosen before).
       if (!this.chat.tr.messages.length && (this.chat.session || this.chat.starting) && !this.chat.sending) void this.chat.closeSession();
@@ -381,9 +386,9 @@ class Panel {
     const defaultModel = (sess?.backend === b ? sess.defaultModel() : undefined) ?? cat?.model;
     return {
       backend: sess?.backend ?? b,
-      agents: BACKENDS.map((id) => {
+      agents: backendIds(s).map((id) => {
         const st = this.health.statuses?.find((x) => x.id === id);
-        return { id, label: BACKEND_LABEL[id], available: st?.available, reason: st?.reason };
+        return { id, label: backendLabel(s, id), available: st?.available, reason: st?.reason };
       }),
       defaultEffort: this.catalogs.get(sess?.backend ?? b)?.effort,
       models: sess?.models() ?? cat?.models ?? [], model: sess ? sess.currentModel() : saved("model"), defaultModel,
@@ -432,7 +437,7 @@ class Panel {
   /** The chosen backend's models, modes and efforts. `strict`: let a failure reach the caller (a picker menu shows it). */
   private async loadCatalog(strict: boolean): Promise<void> {
     const b = this.host.getSettings().backend;
-    if (b === "custom" && !strict) return this.syncPickers();
+    if (isCustomBackend(b) && !strict) return this.syncPickers();
     if (this.catalogs.has(b) || this.chat.session?.backend === b) return this.syncPickers();
     // What is already known (read from a session before, kept by the host) costs nothing. Reading one starts an agent, so
     // that is left to a menu being opened (`strict`), and even then a session already starting is waited for instead.
@@ -443,10 +448,11 @@ class Panel {
       await this.chat.starting.catch(() => {});
       if (this.chat.session?.backend === b) return this.syncPickers();
     }
-    const source = JSON.stringify(this.host.getSettings().customAgent);
+    const revision = () => isCustomProfile(b) ? this.host.getSettings().customAgents?.[b]?.revision : undefined;
+    const source = revision();
     try {
       const catalog = await this.host.runtime.catalog(b);
-      if (b !== "custom" || source === JSON.stringify(this.host.getSettings().customAgent)) this.catalogs.set(b, catalog);
+      if (source === revision()) this.catalogs.set(b, catalog);
     } catch (e) {
       if (strict) throw e;
     }
@@ -567,7 +573,7 @@ class Panel {
     this.feed.update(c.tr, !c.busy);
     this.composer.setBusy(c.busy);
     this.composer.setContextFill(contextFill(c.tr));
-    this.feed.setPending(c.sending && c.tr.running === null ? (c.compacting ? t("work.summarising") : c.starting ? t("work.starting", { agent: BACKEND_LABEL[c.backend] }) : t("work.sending")) : null);
+    this.feed.setPending(c.sending && c.tr.running === null ? (c.compacting ? t("work.summarising") : c.starting ? t("work.starting", { agent: backendLabel(this.host.getSettings(), c.backend) }) : t("work.sending")) : null);
   }
 
   private dispose(): void {

@@ -243,7 +243,8 @@ const BASE = `
 /* only the model list scrolls: the agents, a search field and the effort row stay put */
 .zmc :is(.mdd__body, .mdd__mods) { display: flex; flex-direction: column; min-height: 0; flex: 0 1 auto; }
 .zmc :is(.mdd__body:has(.mdd__mods--long), .mdd__mods--long) { flex: 1 1 auto; }
-.zmc .mdd__agents { display: flex; gap: 2px; margin: var(--s2) var(--s2) var(--s1); padding: 2px; border-radius: var(--pill); background: var(--paper-sunk); }
+.zmc .mdd__agents { display: flex; flex-wrap: wrap; gap: 2px; margin: var(--s2) var(--s2) var(--s1); padding: 2px; border-radius: var(--r2); background: var(--paper-sunk); max-height: 30%; overflow: auto; }
+.zmc .mdd__an { overflow: hidden; text-overflow: ellipsis; }
 .zmc .mdd__agent { flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: var(--h-chip); padding: 0 var(--s2); border: 0; border-radius: var(--pill); background: none; color: var(--ink-muted); font-size: var(--fs-2); white-space: nowrap; transition: background var(--ease), color var(--ease); }
 .zmc .mdd__agent:hover:not(.mdd__agent--on) { color: var(--ink); background: var(--tint-hover); }
 .zmc .mdd__agent--on { background: var(--paper-raised); color: var(--ink); font-weight: 500; box-shadow: 0 1px 2px rgb(0 0 0 / 0.1); }

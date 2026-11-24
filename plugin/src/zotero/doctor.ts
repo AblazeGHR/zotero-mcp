@@ -2,6 +2,7 @@
 import type { AgentRuntime, DoctorCheck, PanelSettings, Spawner } from "../types.ts";
 import { BACKENDS, findBinary, forgetBinaries, isNative } from "../agent/index.ts";
 import { t } from "../i18n.ts";
+import { isCustomBackend } from "../custom-agent.ts";
 
 const port = () => Number(Zotero.Prefs.get("httpServer.port")) || 23119;
 
@@ -122,7 +123,7 @@ export function createDoctor(deps: { win: any; spawner: Spawner; runtime: AgentR
     const chosen = deps.settings().backend;
     const node = await findBinary(spawner, env, "node");
     if (node) checks.push({ id: "node", ok: true, label: t("doctor.nodeOk"), detail: node });
-    else if (chosen === "custom" || !isNative(BACKENDS[chosen])) checks.push({ id: "node", ok: false, label: t("doctor.nodeMissing"), detail: t("doctor.nodeMissingDetail") });
+    else if (isCustomBackend(chosen) || !isNative(BACKENDS[chosen])) checks.push({ id: "node", ok: false, label: t("doctor.nodeMissing"), detail: t("doctor.nodeMissingDetail") });
 
     // 4. the chosen agent
     const status = (await runtime.detect()).find((s) => s.id === chosen);

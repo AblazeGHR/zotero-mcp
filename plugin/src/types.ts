@@ -89,8 +89,9 @@ export type ChatEvent =
 // ───────────────────────────── agent/ ─────────────────────────────
 
 export type BuiltinBackendId = "claude-code" | "codex" | "pi" | "opencode";
-export type BackendId = BuiltinBackendId | "custom";
-export type BackendValues<T> = Record<BuiltinBackendId, T> & Partial<Record<"custom", T>>;
+export type CustomBackendId = `custom:${string}`;
+export type BackendId = BuiltinBackendId | CustomBackendId | "custom";
+export type BackendValues<T> = Record<BuiltinBackendId, T> & Partial<Record<CustomBackendId | "custom", T>>;
 
 /** A user-installed stdio ACP agent. Arguments are literal argv entries, never a shell command. */
 export interface CustomAgentConfig {
@@ -99,6 +100,12 @@ export interface CustomAgentConfig {
   args: string[];
   env: Record<string, string>;
 }
+
+export interface CustomAgentProfile extends CustomAgentConfig {
+  /** Changes when the launch command, arguments or environment change. */
+  revision: string;
+}
+export type CustomAgents = Partial<Record<CustomBackendId, CustomAgentProfile>>;
 
 export interface ModelOption { id: string; name: string; description?: string }
 export interface CodexModelOption extends ModelOption { levels: string[] }
@@ -123,6 +130,7 @@ export interface StartOpts {
   brief: string;
   /** Continue a saved conversation (ACP session/load). */
   resumeSessionId?: string;
+  customAgentRevision?: string;
   model?: string;
   /** A permission mode id from the backend's own list (Claude: default | acceptEdits | plan | auto | bypassPermissions; Codex: read-only | workspace-write | agent | agent-full-access). */
   mode?: string;
@@ -296,6 +304,7 @@ export interface SkillHost {
 export interface PanelSettings {
   backend: BackendId;
   customAgent?: CustomAgentConfig;
+  customAgents?: CustomAgents;
   /** Per backend; "" means the backend's own default. Ids are the backend's, so they are never shared between backends. */
   model: BackendValues<string>;
   mode: BackendValues<string>;
@@ -375,6 +384,7 @@ export interface SavedSession {
   cwd: string;
   /** The bridge's session id, for session/load. */
   agentSessionId: string;
+  customAgentRevision?: string;
   updatedAt: number;
 }
 

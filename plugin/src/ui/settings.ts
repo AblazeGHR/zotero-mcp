@@ -10,7 +10,8 @@ import { confirmAction, hint, radios, row, section, seg, select, selectField, su
 import { appearanceCard } from "./settings-look.ts";
 import { skillsCard } from "./settings-skills.ts";
 import { customAgentEditor } from "./settings-custom.ts";
-import { BACKEND_LABEL, BACKENDS, frame } from "./views.ts";
+import { backendIds, backendLabel, BACKENDS, frame } from "./views.ts";
+import { isCustomBackend, isCustomProfile } from "../custom-agent.ts";
 import { UI_LANGUAGES, t, uiLanguageFor } from "../i18n.ts";
 
 type CatState = { state: "loading" } | { state: "ok"; catalog: Catalog } | { state: "error"; error: string };
@@ -44,7 +45,7 @@ export function settingsView(host: SettingsHost, o: SettingsDeps): { el: HTMLEle
   let keyDraft = ""; // typed but not saved yet: survives the page being rebuilt by a late status or catalog answer
   let saved = "";
   let timer: number | undefined;
-  let customSource = JSON.stringify(host.getSettings().customAgent);
+  let customSource = JSON.stringify(host.getSettings().customAgents);
 
   /** The "Saved" pill: kept across re-renders, gone after a moment. */
   const flash = (text = t("settings.saved")) => {
@@ -54,8 +55,8 @@ export function settingsView(host: SettingsHost, o: SettingsDeps): { el: HTMLEle
     timer = env.win.setTimeout(() => show(""), 1600);
   };
   const save = async (patch: Partial<PanelSettings>) => {
-    try { await host.setSettings(patch); o.changed(); if (patch.customAgent) o.refreshStatuses(); flash(); } catch (e) {
-      if (patch.customAgent) throw e;
+    try { await host.setSettings(patch); o.changed(); if (patch.customAgents) o.refreshStatuses(); flash(); } catch (e) {
+      if (patch.customAgents) throw e;
       keyMsg = t("settings.saveFailed", { error: errMessage(e) });
     }
     render();
@@ -74,18 +75,19 @@ export function settingsView(host: SettingsHost, o: SettingsDeps): { el: HTMLEle
   };
   const appearance = appearanceCard(host, o.look, saveLook, () => render(), language);
   const skills = skillsCard(host, { save, rerender: () => render(), ...(o.createSkill ? { createSkill: o.createSkill } : {}) });
-  const customEditor = customAgentEditor(() => host.getSettings(), save);
+  const customEditor = customAgentEditor(() => host.getSettings(), save, () => render());
   const flag = (key: FlagKey, label: string, help: string) => switchRow(label, help, host.getSettings()[key], (on) => void save(setFlag(key, on)));
 
   /** Read the backend's catalog once: what a chat's session already said if the host kept it, else by asking (which starts the agent). */
   function loadCatalog(b: BackendId, force = false) {
     if (!force && cats.has(b)) return;
     cats.set(b, { state: "loading" });
-    const source = JSON.stringify(host.getSettings().customAgent);
+    const revision = () => isCustomProfile(b) ? host.getSettings().customAgents?.[b]?.revision : undefined;
+    const source = revision();
     const known = force ? undefined : host.runtime.cached?.(b).catch(() => undefined);
     Promise.resolve(known).then((c) => c ?? host.runtime.catalog(b)).then(
-      (catalog) => { if (b !== "custom" || source === JSON.stringify(host.getSettings().customAgent)) cats.set(b, { state: "ok", catalog }); },
-      (e) => { if (b !== "custom" || source === JSON.stringify(host.getSettings().customAgent)) cats.set(b, { state: "error", error: errMessage(e) }); },
+      (catalog) => { if (source === revision()) cats.set(b, { state: "ok", catalog }); },
+      (e) => { if (source === revision()) cats.set(b, { state: "error", error: errMessage(e) }); },
     ).finally(render);
   }
 
@@ -97,8 +99,8 @@ export function settingsView(host: SettingsHost, o: SettingsDeps): { el: HTMLEle
     const cur = sts?.find((x) => x.id === b);
     const cat = cats.get(b);
     const parts: HTMLElement[] = [];
-    const name = (b === "custom" && s.customAgent?.label) || BACKEND_LABEL[b];
-    if (!cat && (b === "custom" || (o.catalogReady && !o.catalogReady(b)))) {
+    const name = backendLabel(s, b);
+    if (!cat && (isCustomBackend(b) || (o.catalogReady && !o.catalogReady(b)))) {
       parts.push(h("div.field", null, hint(t("settings.agent.readHint", { agent: name })),
         h("div", null, h("button.btn.btn--sm", { type: "button", onclick: () => loadCatalog(b, true) }, t("settings.agent.show", { agent: name })))));
     } else if (!cat || cat.state === "loading") {
@@ -119,14 +121,14 @@ export function settingsView(host: SettingsHost, o: SettingsDeps): { el: HTMLEle
       if (c.models.length) parts.push(pick("model", t("settings.model"), c.models));
       if (c.efforts.length) parts.push(pick("effort", t("settings.effort"), c.efforts));
       if (c.modes.length) {
-        parts.push(h("div.field", null, h("span.field__l", null, b === "custom" ? t("settings.agentMode") : t("settings.permissions")),
-          radios(b === "custom" ? t("settings.agentMode") : t("settings.permissionMode"), c.modes.map((m) => ({ id: m.id, label: m.name, help: b === "custom" ? m.description ?? "" : modeHelp(m) })), effective(s, c, "mode", b), (id) => void save(setPerBackend(s, "mode", b, id)))));
+        parts.push(h("div.field", null, h("span.field__l", null, isCustomBackend(b) ? t("settings.agentMode") : t("settings.permissions")),
+          radios(isCustomBackend(b) ? t("settings.agentMode") : t("settings.permissionMode"), c.modes.map((m) => ({ id: m.id, label: m.name, help: isCustomBackend(b) ? m.description ?? "" : modeHelp(m) })), effective(s, c, "mode", b), (id) => void save(setPerBackend(s, "mode", b, id)))));
       }
     }
     return section(t("common.agent"), t("settings.agent.desc"),
-      seg(t("common.agent"), BACKENDS.map((id) => ({ id, label: BACKEND_LABEL[id], title: sts?.find((x) => x.id === id && !x.available)?.reason })), b, (id) => void save({ backend: id as BackendId })),
-      hint(sts ? (cur?.available ? t("settings.agent.ready", { agent: cur.label }) : t("settings.agent.notReady", { agent: cur?.label ?? BACKEND_LABEL[b], reason: cur?.reason ?? t("health.notFound") })) : t("settings.agent.looking")),
-      b === "custom" ? customEditor() : signIn(s),
+      seg(t("common.agent"), backendIds(s).map((id) => ({ id, label: backendLabel(s, id), title: sts?.find((x) => x.id === id && !x.available)?.reason })), b, (id) => void save({ backend: id as BackendId })),
+      hint(sts ? (cur?.available ? t("settings.agent.ready", { agent: cur.label }) : t("settings.agent.notReady", { agent: cur?.label ?? name, reason: cur?.reason ?? t("health.notFound") })) : t("settings.agent.looking")),
+      isCustomBackend(b) ? null : signIn(s), customEditor(),
       parts.length ? h("div.fields", null, ...parts) : null,
       hint(t("settings.agent.nextChat")));
   }
@@ -136,7 +138,7 @@ export function settingsView(host: SettingsHost, o: SettingsDeps): { el: HTMLEle
     if (ownProviders(b)) return sub(t("settings.signIn"), hint(t(b === "pi" ? "settings.signIn.pi" : "settings.signIn.opencode")));
     const mode = s.auth[b] ?? "subscription";
     const st = o.statuses()?.find((x) => x.id === b);
-    const input = h("input.input", { type: "password", autocomplete: "off", spellcheck: "false", placeholder: keys[b] ? t("settings.key.replace") : t("settings.key.paste"), "aria-label": t("settings.key.label", { agent: BACKEND_LABEL[b] }), value: keyDraft, oninput: () => { keyDraft = input.value; } }) as HTMLInputElement;
+    const input = h("input.input", { type: "password", autocomplete: "off", spellcheck: "false", placeholder: keys[b] ? t("settings.key.replace") : t("settings.key.paste"), "aria-label": t("settings.key.label", { agent: backendLabel(s, b) }), value: keyDraft, oninput: () => { keyDraft = input.value; } }) as HTMLInputElement;
     const saveKey = async () => {
       const v = input.value.trim();
       if (!v) return;
@@ -161,7 +163,7 @@ export function settingsView(host: SettingsHost, o: SettingsDeps): { el: HTMLEle
   /** The reader's Translate button. Its model list is the catalog this screen already has; none known, only the default. */
   function translate(s: PanelSettings): HTMLElement {
     const b = s.backend;
-    if (b === "custom") return section(t("settings.translate"), t("agent.custom.noTranslate"));
+    if (isCustomBackend(b)) return section(t("settings.translate"), t("agent.custom.noTranslate"));
     const cat = cats.get(b);
     const models = cat?.state === "ok" ? cat.catalog.models : [];
     const chosen = s.translateModel[b] ?? "";
@@ -171,7 +173,7 @@ export function settingsView(host: SettingsHost, o: SettingsDeps): { el: HTMLEle
       h("div.fields", null,
         selectField(t("settings.translate.into"), LANGUAGES.map((l) => ({ id: l.id, label: l.label })), s.translateTo, (id) => void save({ translateTo: id })),
         selectField(t("settings.model"), [{ id: "", label: t("settings.translate.fastest") }, ...list.map((m) => ({ id: m.id, label: m.name }))], chosen, (id) => void save(setPerBackend(s, "translateModel", b, id)))),
-      hint(t("settings.translate.runsOn", { agent: BACKEND_LABEL[b] })));
+      hint(t("settings.translate.runsOn", { agent: backendLabel(s, b) })));
   }
 
   function folder(s: PanelSettings): HTMLElement {
@@ -205,9 +207,9 @@ export function settingsView(host: SettingsHost, o: SettingsDeps): { el: HTMLEle
 
   function render() {
     const s = host.getSettings();
-    const source = JSON.stringify(s.customAgent);
-    if (source !== customSource) { customSource = source; cats.delete("custom"); }
-    if (s.backend !== "custom" && (!o.catalogReady || o.catalogReady(s.backend))) loadCatalog(s.backend);
+    const source = JSON.stringify(s.customAgents);
+    if (source !== customSource) { customSource = source; for (const id of cats.keys()) if (isCustomBackend(id)) cats.delete(id); }
+    if (!isCustomBackend(s.backend) && (!o.catalogReady || o.catalogReady(s.backend))) loadCatalog(s.backend);
     // Rebuilding the page must not drop the keyboard user's place: refocus the control that had focus.
     const focused = (body.getRootNode() as ShadowRoot).activeElement as HTMLElement | null;
     const fid = focused && body.contains(focused) ? focused.dataset.fid : undefined;
@@ -256,6 +258,6 @@ export function settingsView(host: SettingsHost, o: SettingsDeps): { el: HTMLEle
   const el = o.back ? frame(t("settings.title"), o.back, body) : body;
   o.refreshStatuses();
   render();
-  void Promise.all(BACKENDS.filter((b) => b !== "custom").map((b) => host.hasApiKey(b).then((v) => (keys[b] = v), () => (keys[b] = false)))).then(render);
+  void Promise.all(BACKENDS.map((b) => host.hasApiKey(b).then((v) => (keys[b] = v), () => (keys[b] = false)))).then(render);
   return { el, render };
 }

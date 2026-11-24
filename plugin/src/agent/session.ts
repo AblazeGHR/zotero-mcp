@@ -308,6 +308,7 @@ export class AcpAgentSession implements AgentSession {
       let sessionId: string;
       let res: Obj;
       if (opts.resumeSessionId) {
+        if (opts.customAgentRevision !== undefined && !init.agentCapabilities?.loadSession) throw new ResumeError(t("agent.custom.noResume"));
         // Replayed history arrives as session/update notifications before this resolves; no turn is
         // running, so none of it is emitted.
         try {

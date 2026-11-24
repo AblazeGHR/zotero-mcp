@@ -67,7 +67,7 @@ Install OpenCode (`npm i -g opencode-ai`, or any of the ways its site lists) and
 
 ### Custom ACP agents
 
-In **Settings > Agent**, choose **Custom**. Enter a display name, the executable
+In **Settings > Agent**, click **Add custom agent**. Enter a display name, the executable
 command, arguments as a JSON array of strings, and optional extra environment
 variables as a JSON object of strings. Press **Save custom agent**. For example,
 [Qoder's documented ACP command](https://docs.qoder.com/zh/cli/acp) is:
@@ -90,19 +90,22 @@ the extra variables.
 Extras are saved in Zotero preferences, **not** the keychain; prefer the agent's
 own credential storage for secrets.
 
-**Show Custom's options** starts a short session to read the agent's advertised
+Each saved agent appears by name in the agent picker, with its own model, effort,
+and mode settings. **Show the agent's options** starts a short session to read its advertised
 models, effort levels and modes. Missing options stay hidden. A mode's name and
 description come from the agent; custom modes are not assumed to have the same
 permission behavior as the built-in agents. Changing the command takes effect in
-new chats and clears the custom model/mode/effort choices. An existing chat keeps
-its running process.
+new chats and clears that agent's model, mode, and effort choices. An existing
+chat keeps its running process.
 
 Custom support is best-effort ACP, not a vendor compatibility certification. It
 uses the existing client's capabilities and does not add filesystem or terminal
-RPC services. Saved custom chats remain readable locally, but continuing them,
-a terminal resume command, Summarise now and Translate are unavailable. In
-particular, the plugin cannot assume an arbitrary agent implements the verified
-tool restrictions required by Translate.
+RPC services. A chat saved with an identified agent can continue with its
+original launch configuration when the agent advertises and supports
+`session/load`. If loading fails, the saved session ID is retained. Older
+history entries that did not record which custom agent ran remain readable.
+The Status page and History can copy the session ID. Custom agents have no
+terminal resume command, Summarise now, or Translate.
 
 ## Settings
 

@@ -93,6 +93,70 @@ await test("status and history copy the native Codex session ID", async (p) => {
   assert.deepEqual(await sim(p, () => window.__copied), [liveId, "agent-s2", "agent-s2"]);
 }, { width: 300 });
 
+await test("named custom agents coexist, copy their IDs and reopen only the original session", async (p) => {
+  await sim(p, () => {
+    window.__copied = [];
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text) => { window.__copied.push(text); } }, configurable: true });
+    const runtime = window.__zmc.host.runtime;
+    const start = runtime.start.bind(runtime);
+    window.__resumeCalls = [];
+    runtime.start = (options) => {
+      if (options.resumeSessionId) {
+        window.__resumeCalls.push([options.backend, options.resumeSessionId]);
+        if (window.__rejectResume) return Promise.reject(Object.assign(new Error("Session unavailable"), { name: "ResumeError" }));
+      }
+      return start(options);
+    };
+  });
+  const settings = p.getByRole("button", { name: "Settings", exact: true });
+  const add = p.getByRole("button", { name: "Add custom agent", exact: true });
+  const save = p.getByRole("button", { name: "Save custom agent", exact: true });
+  const addAgent = async (name, command) => {
+    await add.click();
+    await p.getByRole("textbox", { name: "Name", exact: true }).fill(name);
+    await p.getByRole("textbox", { name: "Command", exact: true }).fill(command);
+    await save.click();
+    await p.waitForFunction((label) => {
+      const s = window.__zmc.host.getSettings();
+      return s.customAgents?.[s.backend]?.label === label;
+    }, name);
+  };
+  await settings.click();
+  await addAgent("CodeBuddy Code", "cbc");
+  const cbc = await sim(p, () => window.__zmc.host.getSettings().backend);
+  await addAgent("Another Agent", "another");
+  await p.locator(".seg__opt", { hasText: /^CodeBuddy Code$/ }).click();
+  await p.waitForFunction((id) => window.__zmc.host.getSettings().backend === id, cbc);
+  assert.equal(await sim(p, () => Object.keys(window.__zmc.host.getSettings().customAgents).length), 2);
+  await p.keyboard.press("Escape");
+  await send(p, "Start CBC session");
+  await done(p);
+  const status = p.locator(".stat");
+  await status.click();
+  const id = await p.locator(".status__session-id").innerText();
+  await p.getByRole("button", { name: "Copy CodeBuddy Code session ID" }).click();
+  const history = p.getByRole("button", { name: "History", exact: true });
+  await history.click();
+  const row = p.locator(".hrow").filter({ hasText: "CodeBuddy Code" });
+  await row.getByRole("button", { name: "Copy CodeBuddy Code session ID" }).click();
+  await row.locator(".hrow__main").click();
+  await p.waitForSelector(".cin");
+  await send(p, "Continue CBC session");
+  await p.waitForFunction(() => window.__zmc.sim.prompts.length === 2);
+  await done(p);
+  assert.deepEqual(await sim(p, () => window.__resumeCalls), [[cbc, id]]);
+  assert.deepEqual(await sim(p, () => window.__copied), [id, id]);
+  await sim(p, () => { window.__rejectResume = true; });
+  await history.click();
+  await row.locator(".hrow__main").click();
+  await p.waitForSelector(".cin");
+  await send(p, "Do not send to a new session");
+  await p.getByText(/Session unavailable/).waitFor();
+  assert.equal(await sim(p, () => window.__zmc.sim.prompts.length), 2);
+  await status.click();
+  assert.equal(await p.locator(".status__session-id").innerText(), id);
+}, { width: 300 });
+
 await test("enter sends, shift+enter adds a line, the draft clears", async (p) => {
   await p.locator(".cin").fill("line one");
   await p.locator(".cin").press("Shift+Enter");
@@ -747,7 +811,7 @@ await test("agent switch: an empty chat switches at once; a chat with messages a
   await p.locator(".pick--model").click();
   await p.waitForSelector(".mdd .menu__item");
   assert.deepEqual(await p.locator(".mdd__agent").evaluateAll((els) => els.map((e) => [e.textContent, e.dataset.state, e.getAttribute("aria-checked")])),
-    [["Claude Code", "ok", "true"], ["Codex", "bad", "false"], ["pi", "ok", "false"], ["OpenCode", "ok", "false"], ["Custom", "bad", "false"]], "every agent, with the status detect() gave (Custom unconfigured, #813)");
+    [["Claude Code", "ok", "true"], ["Codex", "bad", "false"], ["pi", "ok", "false"], ["OpenCode", "ok", "false"]], "every configured agent, with its detected status");
   // an agent that is not ready says why and stays unchosen
   await agentTab(p, "Codex").click();
   assert.match(await p.locator(".mdd__note").innerText(), /Codex isn't ready: codex is not installed/);
@@ -1211,7 +1275,7 @@ await test("history: each chat shows its folder; Copy terminal command copies th
 await test("welcome: first run shows it instead of the chat; the checks settle one by one; a failing check is fixed in place; Start chatting hands over", async (p) => {
   assert.equal(await p.locator(".cin").isVisible(), false, "the chat is not showing yet");
   assert.match(await p.locator(".wel h2").innerText(), /Chat with your library/);
-  assert.equal(await p.locator(".wcard").count(), 5); // the four built-ins and the user-configured agent (#813)
+  assert.equal(await p.locator(".wcard").count(), 4); // only configured profiles get their own card
   assert.equal(await p.locator(".wcard[aria-checked=true]").innerText().then((t) => t.split("\n")[0]), "Claude Code");
   await p.waitForSelector(".wrow--pending");
   await p.waitForSelector(".wrow--bad", { timeout: 4000 });

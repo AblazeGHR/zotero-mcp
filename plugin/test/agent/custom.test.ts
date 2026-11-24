@@ -5,11 +5,46 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { createRuntime } from "../../src/agent/runtime.ts";
-import { readCustomAgent } from "../../src/custom-agent.ts";
+import { MIGRATED_CUSTOM_ID, readCustomAgent } from "../../src/custom-agent.ts";
+import { withDefaults } from "../../src/zotero/defaults.ts";
 import { resumeCommand } from "../../src/agent/backends.ts";
 import { createNodeSpawner } from "../node-spawner.ts";
 
 const mock = fileURLToPath(new URL("../mock-agent.mjs", import.meta.url));
+
+test("migrates the old slot into a stable named profile with its choices", () => {
+  const migrated = withDefaults({ backend: "custom", customAgent: { label: "CodeBuddy Code", command: "cbc", args: ["--acp"], env: {} },
+    model: { "claude-code": "", codex: "my-codex", pi: "", opencode: "", custom: "my-cbc" } });
+  assert.equal(migrated.backend, MIGRATED_CUSTOM_ID);
+  assert.equal(migrated.customAgents?.[MIGRATED_CUSTOM_ID]?.command, "cbc");
+  assert.equal(migrated.model[MIGRATED_CUSTOM_ID], "my-cbc");
+  assert.equal(migrated.model.codex, "my-codex");
+  assert.deepEqual(withDefaults(JSON.parse(JSON.stringify(migrated))), migrated);
+});
+
+test("loads a named profile's original session only when its revision and ACP capability match", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "zmc-custom-resume-"));
+  const backend = "custom:cbc";
+  let profile = { label: "CodeBuddy Code", command: process.execPath, args: [mock], env: {} as Record<string, string>, revision: "original" };
+  const native = createNodeSpawner({ baseEnv: { HOME: cwd, PATH: "" } });
+  let spawns = 0;
+  const spawner = { ...native, spawn: (...args: Parameters<typeof native.spawn>) => { spawns++; return native.spawn(...args); } };
+  const runtime = createRuntime({ spawner, bridgeDir: cwd, customAgents: () => ({ [backend]: profile }) });
+  const start = { backend, cwd, brief: "", customAgentRevision: "original", resumeSessionId: "keep-this-id" } as const;
+  try {
+    const loaded = await runtime.start(start);
+    try {
+      assert.equal(loaded.backend, backend);
+      assert.equal(loaded.sessionId, start.resumeSessionId);
+    } finally { await loaded.close(); }
+    profile = { ...profile, revision: "new" };
+    await assert.rejects(runtime.start(start), { name: "ResumeError" });
+    assert.equal(spawns, 1, "a different profile revision cannot even spawn");
+    profile = { ...profile, env: { MOCK_LOAD: "unsupported" } };
+    await assert.rejects(runtime.start({ ...start, customAgentRevision: "new" }), { name: "ResumeError" });
+    assert.equal(spawns, 2);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
 
 for (const variant of ["claude", "codex"]) test(`a custom ${variant} endpoint preserves argv/env and uses advertised models and modes`, async () => {
   const cwd = mkdtempSync(join(tmpdir(), "zmc-custom-"));
@@ -79,12 +114,14 @@ test("custom detection checks executables without launching an agent or probing 
     spawn: async () => { throw new Error("detection must not spawn an agent"); },
     run: async (command: string, args: string[]) => {
       calls.push([command, ...args]);
-      return args[0] === "my-acp" ? { code: 0, stdout: "C:\\Agents\\my-acp.exe\r\n", stderr: "" } : { code: 1, stdout: "", stderr: "" };
+      return args[0] === "my-acp" || args[0] === "C:\\Agents\\:my-acp.exe" ? { code: 0, stdout: "C:\\Agents\\my-acp.exe\r\n", stderr: "" } : { code: 1, stdout: "", stderr: "" };
     },
   };
   let config = { label: "Native ACP", command: "my-acp", args: ["--acp"], env: {} };
   const runtime = createRuntime({ spawner, bridgeDir: "C:\\unused", customAgent: () => config });
   assert.deepEqual((await runtime.detect()).find(x => x.id === "custom"), { id: "custom", label: "Native ACP", available: true });
+  config = { ...config, command: "C:\\Agents\\my-acp.exe" };
+  assert.equal((await runtime.detect()).find(x => x.id === "custom")?.available, true);
   config = { ...config, command: "C:\\missing.exe" };
   assert.equal((await runtime.detect()).find(x => x.id === "custom")?.available, false);
   assert.ok(calls.every(([command]) => command?.endsWith("where.exe")));

@@ -1,7 +1,7 @@
 // createRuntime: detect which backends can run here, and start a session on one.
 // Process spawning is injected (Spawner); this file has no node:*, DOM or Zotero imports.
-import type { AgentRuntime, AgentSession, BackendId, BackendStatus, Catalog, CodexModelOption, CustomAgentConfig, Spawner, StartOpts } from "../types.ts";
-import { readCustomAgent } from "../custom-agent.ts";
+import type { AgentRuntime, AgentSession, BackendId, BackendStatus, Catalog, CodexModelOption, CustomAgentConfig, CustomAgents, Spawner, StartOpts } from "../types.ts";
+import { customAgentIds, isCustomBackend, isCustomProfile, readCustomAgent } from "../custom-agent.ts";
 import { AcpClient } from "./acp.ts";
 import { ResumeError } from "./jsonrpc.ts";
 import { BACKENDS, BACKEND_IDS, backendOf, findClaudeExecutable, findCli, isNative, probeLogin, type BackendSpec } from "./backends.ts";
@@ -23,6 +23,7 @@ export interface RuntimeOpts {
   onProgress?: (message: string) => void;
   /** Read at each launch so a changed command never reuses the old catalog. */
   customAgent?: () => CustomAgentConfig | undefined;
+  customAgents?: () => CustomAgents | undefined;
   /** The host's saved credential for a Codex model list in API-key mode. */
   codexApiKey?: () => Promise<string | null>;
 }
@@ -82,9 +83,13 @@ export function createRuntime(opts: RuntimeOpts): AgentRuntime {
   const { spawner, bridgeDir } = opts;
 
   async function customCommand(config: CustomAgentConfig, env: Record<string, string>, verify = false): Promise<string> {
-    if (!verify && /^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(config.command)) return config.command;
-    const found = await findBinary(spawner, env, config.command);
-    if (!found) throw new Error(t("agent.custom.notFound"));
+    const absolute = /^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(config.command);
+    if (!verify && absolute) return config.command;
+    const command = config.command.replaceAll("/", "\\");
+    const end = command.lastIndexOf("\\");
+    const query = spawner.windows && absolute ? `${command.slice(0, end + 1)}:${command.slice(end + 1)}` : config.command;
+    const found = await findBinary(spawner, env, query);
+    if (!found || (spawner.windows && absolute && found.toLowerCase() !== command.toLowerCase())) throw new Error(t("agent.custom.notFound"));
     return found;
   }
 
@@ -190,15 +195,19 @@ export function createRuntime(opts: RuntimeOpts): AgentRuntime {
         return { ...base, available: true, ...(login.account ? { account: login.account } : {}) };
       }),
     );
-    if (opts.customAgent) {
+    const profiles = opts.customAgents?.();
+    const custom: { id: BackendId; config: CustomAgentConfig | undefined }[] = customAgentIds(profiles).map((id) => ({ id, config: profiles?.[id] }));
+    if (opts.customAgent) custom.push({ id: "custom", config: opts.customAgent() });
+    statuses.push(...await Promise.all(custom.map(async ({ id, config }): Promise<BackendStatus> => {
+      const label = config?.label || t("agent.custom.label");
       try {
-        const config = readCustomAgent(opts.customAgent());
-        await customCommand(config, { ...env, ...config.env }, true);
-        statuses.push({ id: "custom", label: config.label || t("agent.custom.label"), available: true });
+        const validated = readCustomAgent(config);
+        await customCommand(validated, { ...env, ...validated.env }, true);
+        return { id, label, available: true };
       } catch (e) {
-        statuses.push({ id: "custom", label: t("agent.custom.label"), available: false, reason: e instanceof Error ? e.message : String(e) });
+        return { id, label, available: false, reason: e instanceof Error ? e.message : String(e) };
       }
-    }
+    })));
     return statuses;
   }
 
@@ -219,7 +228,7 @@ export function createRuntime(opts: RuntimeOpts): AgentRuntime {
     },
 
     catalog(id: BackendId): Promise<Catalog> {
-      if (id === "custom") return probeCatalog(id);
+      if (isCustomBackend(id)) return probeCatalog(id);
       let p = catalogs.get(id);
       if (!p) {
         p = probeCatalog(id);
@@ -239,16 +248,18 @@ export function createRuntime(opts: RuntimeOpts): AgentRuntime {
     },
 
     async start(start: StartOpts): Promise<AgentSession> {
-      if (start.backend === "custom") {
+      if (isCustomBackend(start.backend)) {
         if (start.locked) throw new Error(t("agent.custom.noTranslate"));
-        if (start.resumeSessionId) throw new ResumeError(t("agent.custom.noResume"));
-        const config = readCustomAgent(opts.customAgent?.());
+        if (start.backend === "custom" && start.resumeSessionId) throw new ResumeError(t("agent.custom.noResume"));
+        const profile = isCustomProfile(start.backend) ? opts.customAgents?.()?.[start.backend] : undefined;
+        if ((start.resumeSessionId || start.customAgentRevision) && (!profile || profile.revision !== start.customAgentRevision)) throw new ResumeError(t("agent.custom.noResume"));
+        const config = readCustomAgent(start.backend === "custom" ? opts.customAgent?.() : profile);
         const base = await spawner.baseEnv();
         const env = bridgeEnv({ ...base, ...config.env }, { extra: start.env });
         const withPath = (start.path ?? []).reduceRight((e, dir) => withPathFirst(e, dir), env);
         const client = await AcpClient.spawn({ spawner, command: await customCommand(config, withPath), args: config.args,
           cwd: start.cwd, env: withPath, ...(opts.initTimeoutMs !== undefined ? { initTimeoutMs: opts.initTimeoutMs } : {}) });
-        return AcpAgentSession.open(client, backendOf("custom"), start);
+        return AcpAgentSession.open(client, backendOf(start.backend), start);
       }
       const spec = BACKENDS[start.backend];
       const login = await spawner.baseEnv();

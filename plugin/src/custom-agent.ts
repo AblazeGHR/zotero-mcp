@@ -1,5 +1,19 @@
-import type { CustomAgentConfig } from "./types.ts";
+import type { BackendId, CustomAgentConfig, CustomAgents, CustomBackendId } from "./types.ts";
 import { t } from "./i18n.ts";
+
+export const MIGRATED_CUSTOM_ID = "custom:legacy" as const;
+
+export function isCustomProfile(id: string): id is CustomBackendId {
+  return /^custom:[a-z0-9-]+$/.test(id);
+}
+
+export function isCustomBackend(id: string): id is CustomBackendId | "custom" {
+  return id === "custom" || isCustomProfile(id);
+}
+
+export function customAgentIds(agents: CustomAgents | undefined): CustomBackendId[] {
+  return (Object.keys(agents ?? {}) as BackendId[]).filter(isCustomProfile).filter((id) => !!agents?.[id]);
+}
 
 /** Validate both saved preferences and the settings form before launching a process. */
 export function readCustomAgent(value: unknown): CustomAgentConfig {

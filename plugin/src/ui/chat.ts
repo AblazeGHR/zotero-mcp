@@ -9,6 +9,7 @@ import { ownProviders } from "./settings-model.ts";
 import { applyEvent, emptyTranscript, promptFor, replay } from "./transcript.ts";
 import type { TranscriptState } from "./transcript.ts";
 import { t } from "../i18n.ts";
+import { isCustomBackend, isCustomProfile } from "../custom-agent.ts";
 
 export interface ChatDeps {
   host: PanelHost;
@@ -46,6 +47,7 @@ export class Chat {
   /** Sessions being closed: the next one starts once they are gone (a resumed chat's own old process, above all). Never awaited by the UI. */
   private closing: Promise<unknown> = Promise.resolve();
   private cwd = "";
+  private customAgentRevision: string | undefined;
   /** Chips this agent session has already read (id -> fingerprint): unchanged ones are not sent again. */
   private sent = new Map<string, string>();
   /** Chips this chat has shown in a sent message (id -> fingerprint): the composer stops showing them (isShown). */
@@ -88,10 +90,10 @@ export class Chat {
     return this.session?.backend ?? (this.resume?.agentSessionId ? this.resume.backend : this.d.host.getSettings().backend);
   }
 
-  /** Null for other agents; an empty string while the current Codex chat has no native ID. */
-  get codexSessionId(): string | null {
-    if (this.backend !== "codex") return null;
-    return this.session?.sessionId ?? (this.saved?.backend === "codex" ? this.saved.agentSessionId : undefined) ?? "";
+  get visibleSessionId(): string | null {
+    const backend = this.backend;
+    if (backend !== "codex" && !isCustomBackend(backend)) return null;
+    return this.session?.sessionId ?? (this.saved?.backend === backend ? this.saved.agentSessionId : undefined) ?? "";
   }
 
   async ensureSession(): Promise<AgentSession> {
@@ -109,8 +111,13 @@ export class Chat {
       await this.closing;
       current();
       const resume = this.resume?.agentSessionId ? this.resume : null;
+      if (resume?.backend === "custom") throw new Error(t("agent.custom.noResume"));
       const folder = this.resume?.cwd;
       const start = async (set: PanelSettings, b: BackendId, resumeSessionId?: string) => {
+        const revision = isCustomProfile(b) ? set.customAgents?.[b]?.revision : undefined;
+        if (isCustomProfile(b) && (!revision || (resumeSessionId && revision !== resume?.customAgentRevision))) {
+          throw new Error(t("agent.custom.noResume"));
+        }
         const prep = await host.prepareSession(folder, b);
         current();
         this.cwd = prep.cwd;
@@ -121,6 +128,7 @@ export class Chat {
           ...(set.effort[b] ? { effort: set.effort[b] } : {}),
           ...(!ownProviders(b) ? { auth: set.auth[b] } : {}),
           ...(resumeSessionId ? { resumeSessionId } : {}),
+          ...(revision ? { customAgentRevision: revision } : {}),
         });
       };
       let set = host.getSettings();
@@ -133,7 +141,7 @@ export class Chat {
         // The agent no longer has this conversation (it prunes old ones), cannot load one, or the chat was made with an
         // agent that does not start now: go on in a fresh session, once, and say so. Any other failure is reported as it is,
         // and the chat can still be resumed when it is fixed.
-        if (!resume || !((e as Error | null)?.name === "ResumeError" || resume.backend !== set.backend)) throw e;
+        if (!resume || isCustomBackend(resume.backend) || !((e as Error | null)?.name === "ResumeError" || resume.backend !== set.backend)) throw e;
         resumed = false;
         sess = await start(set, set.backend);
         current(sess);
@@ -156,6 +164,7 @@ export class Chat {
         current(sess);
       }
       this.session = sess;
+      this.customAgentRevision = isCustomProfile(sess.backend) ? set.customAgents?.[sess.backend]?.revision : undefined;
       this.sent.clear(); // a new or resumed session: everything goes in full once (DESIGN.md "Context budget")
       this.resume = null;
       this.unsub = sess.on((ev) => {
@@ -200,17 +209,23 @@ export class Chat {
     const run = (this.run = {});
     const mine = () => this.run === run;
     // The bubble shows what the composer showed: context already in this chat is only named to the agent, not shown again.
-    const fresh = used.filter((c) => !this.isShown(c));
-    for (const c of used) this.shown.set(c.id, chipHash(c));
-    this.d.shownChanged();
-    this.dispatch({ t: "user", id: nextId("u") + Date.now().toString(36), text, chips: fresh.map(summary) });
     try {
+      if (this.resume && isCustomBackend(this.resume.backend)) {
+        // Establish that the old session can be loaded before recording a message it may never receive.
+        await this.ensureSession();
+        if (!mine()) return;
+      }
+      const fresh = used.filter((c) => !this.isShown(c));
+      for (const c of used) this.shown.set(c.id, chipHash(c));
+      this.d.shownChanged();
+      this.dispatch({ t: "user", id: nextId("u") + Date.now().toString(36), text, chips: fresh.map(summary) });
       const starting = this.ensureSession();
       // The focused paper's metadata and full-text file, prepared while the session starts (never longer than 1.5 s after).
       const paper = host.paperContext(used, starting).catch(() => [] as ContextChip[]);
       const sess = await starting;
       if (!mine() || !this.saved) return;
-      this.saved = { ...this.saved, backend: sess.backend, agentSessionId: sess.sessionId, cwd: this.cwd || this.saved.cwd };
+      this.saved = { ...this.saved, backend: sess.backend, agentSessionId: sess.sessionId, cwd: this.cwd || this.saved.cwd,
+        ...(this.customAgentRevision ? { customAgentRevision: this.customAgentRevision } : {}) };
       let ctx = { text: "", images: [] as { mime: string; data: string }[] };
       const extra = await paper;
       if (!mine()) return;

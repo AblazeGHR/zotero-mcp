@@ -1,4 +1,5 @@
-import type { BackendId, PanelSettings, PromptEntry } from "../types.ts";
+import type { BackendValues, PanelSettings, PromptEntry } from "../types.ts";
+import { isCustomProfile, MIGRATED_CUSTOM_ID, readCustomAgent } from "../custom-agent.ts";
 import { DEFAULT_APPEARANCE, readAppearance } from "../ui/appearance.ts";
 import { LANGUAGES, languageForLocale } from "../ui/settings-model.ts";
 import { UI_LANGUAGES, resolveLanguage, t } from "../i18n.ts";
@@ -11,7 +12,7 @@ export const defaultPrompts = (lang = "en"): PromptEntry[] => [
   { id: "compare", slot: 4, title: t("prompt.compare.title", undefined, lang), text: t("prompt.compare.text", undefined, lang) },
 ];
 
-const each = <T>(v: T): Record<BackendId, T> => ({ "claude-code": v, codex: v, pi: v, opencode: v, custom: v });
+const each = <T>(v: T): BackendValues<T> => ({ "claude-code": v, codex: v, pi: v, opencode: v, custom: v });
 
 export const DEFAULT_SETTINGS: PanelSettings = {
   backend: "claude-code",
@@ -48,10 +49,25 @@ export const DEFAULT_SETTINGS: PanelSettings = {
  */
 export function withDefaults(saved: Partial<PanelSettings>, locale?: string): PanelSettings {
   const d = DEFAULT_SETTINGS;
+  const { customAgent, ...settings } = saved;
+  const customAgents = { ...saved.customAgents };
+  const migrate = !!customAgent && !saved.customAgents;
+  if (migrate) {
+    try { customAgents[MIGRATED_CUSTOM_ID] = { ...readCustomAgent(customAgent), revision: "migrated" }; } catch { /* invalid old configuration */ }
+  }
+  const values = <T>(defaults: BackendValues<T>, stored: BackendValues<T> | undefined): BackendValues<T> => {
+    const merged = { ...defaults, ...stored };
+    if (migrate && stored?.custom !== undefined) merged[MIGRATED_CUSTOM_ID] = stored.custom;
+    return merged;
+  };
+  const chosen = saved.backend ?? d.backend;
+  const backend = chosen === "custom"
+    ? (customAgents[MIGRATED_CUSTOM_ID] ? MIGRATED_CUSTOM_ID : d.backend)
+    : isCustomProfile(chosen) && !customAgents[chosen] ? d.backend : chosen;
   return {
-    ...d, ...saved,
-    model: { ...d.model, ...saved.model }, mode: { ...d.mode, ...saved.mode },
-    effort: { ...d.effort, ...saved.effort }, auth: { ...d.auth, ...saved.auth },
+    ...d, ...settings, backend, customAgents,
+    model: values(d.model, saved.model), mode: values(d.mode, saved.mode),
+    effort: values(d.effort, saved.effort), auth: values(d.auth, saved.auth),
     skills: saved.skills && typeof saved.skills === "object" ? saved.skills : {},
     translate: typeof saved.translate === "boolean" ? saved.translate : d.translate,
     scrollOnSend: typeof saved.scrollOnSend === "boolean" ? saved.scrollOnSend : d.scrollOnSend,
