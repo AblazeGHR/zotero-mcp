@@ -209,7 +209,7 @@ class Panel {
     const screen =
       v === "history" ? historyView(host, { current: () => this.chat.saved?.id ?? null, back, resume: (s) => void this.openSaved(s), deleted: (id) => { if (this.chat.saved?.id === id) void this.newChat(); }, renamed: (s) => this.chat.adoptRename(s.id, s.title) })
       : v === "welcome" ? welcomeView(host, this.health, { done: () => void this.finishWelcome(), recheck: () => void this.health.refresh(), changed: () => this.onSettings(), openSettings: () => this.show("settings") })
-      : v === "status" ? statusView(host, { back, initial: this.health.checks, openSettings: () => this.show("settings"), changed: (c) => this.health.set(c) })
+      : v === "status" ? statusView(host, { back, initial: this.health.checks, codexSessionId: () => this.chat.codexSessionId, openSettings: () => this.show("settings"), changed: (c) => this.health.set(c) })
       : settingsView(host, { back, statuses: () => this.health.statuses, refreshStatuses: () => void this.health.refreshStatuses().then(() => this.activeView?.render?.()), changed: () => this.onSettings(), cleared: () => this.onCleared(), look: this.look,
         createSkill: () => void this.newChat().then(() => { this.composer.setText("/create-skill "); this.composer.focus(); }) });
     this.activeView = screen;
@@ -556,6 +556,7 @@ class Panel {
 
   private render(): void {
     const c = this.chat;
+    if (this.view === "status") this.activeView?.render?.();
     const empty = c.tr.messages.length === 0;
     if (this.emptyShown !== empty) { this.emptyShown = empty; this.paintEmpty(); }
     if (!this.titleInput) { // an open rename edit is not clobbered by a repaint

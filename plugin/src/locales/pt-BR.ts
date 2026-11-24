@@ -76,6 +76,9 @@ const ptBR: Catalog = {
   "status.badSr": " (precisa de atenção)",
   "status.checkFailed": "A própria verificação falhou",
   "status.title": "Status",
+  "sessionId.title": "ID da sessão do Codex",
+  "sessionId.copy": "Copiar ID da sessão do Codex",
+  "sessionId.pending": "Ainda não criada",
   // welcome
   "welcome.claude.sub": "Anthropic. Usa sua assinatura do Claude.",
   "welcome.claude.signIn": "Execute `claude` em um terminal e entre com /login.",

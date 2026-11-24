@@ -76,6 +76,9 @@ const ja: Catalog = {
   "status.badSr": "（要確認）",
   "status.checkFailed": "確認処理そのものに失敗しました",
   "status.title": "ステータス",
+  "sessionId.title": "Codex セッション ID",
+  "sessionId.copy": "Codex セッション ID をコピー",
+  "sessionId.pending": "まだ作成されていません",
   // welcome
   "welcome.claude.sub": "Anthropic。Claude のサブスクリプションを使用します。",
   "welcome.claude.signIn": "ターミナルで `claude` を実行し、/login でサインインしてください。",

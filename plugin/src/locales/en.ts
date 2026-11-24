@@ -76,6 +76,9 @@ const en = {
   "status.badSr": " (needs attention)",
   "status.checkFailed": "The check itself failed",
   "status.title": "Status",
+  "sessionId.title": "Codex session ID",
+  "sessionId.copy": "Copy Codex session ID",
+  "sessionId.pending": "Not created yet",
   // welcome
   "welcome.claude.sub": "Anthropic. Uses your Claude subscription.",
   "welcome.claude.signIn": "Run `claude` in a terminal and sign in with /login.",

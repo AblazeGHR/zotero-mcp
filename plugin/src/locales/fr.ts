@@ -76,6 +76,9 @@ const fr: Catalog = {
   "status.badSr": " (à vérifier)",
   "status.checkFailed": "La vérification a elle-même échoué",
   "status.title": "État",
+  "sessionId.title": "ID de session Codex",
+  "sessionId.copy": "Copier l’identifiant de session Codex",
+  "sessionId.pending": "Pas encore créée",
   // welcome
   "welcome.claude.sub": "Anthropic. Utilise votre abonnement Claude.",
   "welcome.claude.signIn": "Lancez `claude` dans un terminal et connectez-vous avec /login.",

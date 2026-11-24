@@ -1,7 +1,7 @@
 // The panel's other screens: the empty state, history, settings, and the doctor/status view.
 // Each is a plain function returning an element and a `refresh` where it has data to reload.
 import type { BackendId, DoctorCheck, PanelHost, SavedSession } from "../types.ts";
-import { cleanTitle, copyText, dayGroup, env, errMessage, h, icon, isMac, relTime, setKids, slotLabel, svg } from "./dom.ts";
+import { cleanTitle, copyText, dayGroup, env, errMessage, flashCheck, h, icon, isMac, relTime, setKids, slotLabel, svg } from "./dom.ts";
 import { shortPath } from "./settings-model.ts";
 import { skillLabel } from "./skills-model.ts";
 import { t } from "../i18n.ts";
@@ -109,6 +109,15 @@ export function frame(title: string, back: () => void, ...body: (HTMLElement | n
 
 // ───────────────────────────── history ─────────────────────────────
 
+function copySessionIdButton(id: string): HTMLElement {
+  const label = t("sessionId.copy");
+  const button = h("button.iconbtn.iconbtn--sm.session-id-copy", {
+    type: "button", title: label, "aria-label": label,
+    onclick: async () => { if (await copyText(id)) flashCheck(button); },
+  }, icon("copy"));
+  return button;
+}
+
 export function historyView(host: PanelHost, o: { current(): string | null; back(): void; resume(s: SavedSession): void; deleted(id: string): void; renamed?(s: SavedSession): void }): { el: HTMLElement; refresh(): void } {
   const list = h("div.hist__list");
   const q = h("input.input", { type: "search", placeholder: t("history.search"), "aria-label": t("history.search") }) as HTMLInputElement;
@@ -189,6 +198,7 @@ export function historyView(host: PanelHost, o: { current(): string | null; back
           h("span.hrow__m", null, `${BACKEND_LABEL[s.backend] ?? s.backend} · ${relTime(s.updatedAt)}`),
           s.cwd ? h("span.hrow__f", { title: s.cwd }, icon("folder"), h("span", null, shortPath(s.cwd, 30))) : null),
         cmd ? h(`button.${done ? "lnk.hrow__copied" : "iconbtn.iconbtn.iconbtn--sm.hrow__cmd"}`, { type: "button", title: t("history.copyCmd"), "aria-label": done ? t("common.copied") : t("history.copyCmdFor", { title: s.title || t("history.chat") }), onclick: () => void copyCmd(s, cmd) }, icon(done ? "check" : "terminal"), done ? t("common.copied") : null) : null,
+        s.backend === "codex" && s.agentSessionId ? copySessionIdButton(s.agentSessionId) : null,
         h("button.iconbtn.iconbtn--sm.hrow__ren", { type: "button", "aria-label": t("history.renameFor", { title: s.title || t("history.chat") }), title: t("history.rename"), onclick: () => { renaming = s.id; renameDraft = s.title; paint(); env.win.setTimeout(() => (list.querySelector(".hrow__edit") as HTMLInputElement | null)?.select(), 0); } }, icon("pencil")),
         h("button.iconbtn.iconbtn--sm.hrow__del", { type: "button", "aria-label": t("history.deleteFor", { title: s.title || t("history.chat") }), title: t("common.delete"), onclick: () => { confirming = s.id; paint(); } }, icon("trash"))));
     }
@@ -215,16 +225,28 @@ export function historyView(host: PanelHost, o: { current(): string | null; back
 
 // ───────────────────────────── status (the doctor) ─────────────────────────────
 
-export function statusView(host: PanelHost, o: { back(): void; changed(checks: DoctorCheck[]): void; openSettings(): void; initial: DoctorCheck[] | null }): { el: HTMLElement; refresh(): void } {
-  const list = h("div.checks");
+export function statusView(host: PanelHost, o: { back(): void; changed(checks: DoctorCheck[]): void; openSettings(): void; initial: DoctorCheck[] | null; codexSessionId(): string | null }): { el: HTMLElement; refresh(): void; render(): void } {
+  const session = h("div.check.status__session", { hidden: true });
+  const list = h("div.checks", null, session);
   const sum = h("div.status__sum", { role: "status" });
   let busy = false;
   const logs = new Map<string, string>();
+  let shownId: string | null | undefined;
+  const render = () => {
+    const id = o.codexSessionId();
+    if (id === shownId) return;
+    shownId = id;
+    session.hidden = id === null;
+    setKids(session, id === null ? null : h("div.check__tx", null,
+      h("div.check__t", null, t("sessionId.title")),
+      h("div.check__d.status__session-id", { dir: id ? "ltr" : "auto" }, id || t("sessionId.pending"))),
+      id ? copySessionIdButton(id) : null);
+  };
 
   const paint = (checks: DoctorCheck[]) => {
     const bad = checks.filter((c) => !c.ok);
     setKids(sum, h("span.status__dot", { "data-ok": String(bad.length === 0) }), bad.length ? t("status.attention", { n: bad.length }) : t("status.allSet"));
-    setKids(list, checks.map((c) => {
+    const rows = checks.map((c) => {
       const log = h("pre.fixlog", { hidden: !logs.has(c.id), "aria-live": "polite" }, logs.get(c.id) ?? "");
       const p = problem(c.id);
       const fixBtn = c.ok ? null : fixButton(c, ".btn--solid", log, () => { logs.set(c.id, log.textContent ?? ""); refresh(); });
@@ -237,20 +259,24 @@ export function statusView(host: PanelHost, o: { back(): void; changed(checks: D
           !c.ok ? h("p.check__help", null, p.help) : null,
           fixBtn || settingsBtn ? h("div.check__acts", null, fixBtn, settingsBtn) : null,
           log));
-    }));
+    });
+    const backend = checks.findIndex((check) => check.id === "backend");
+    rows.splice(backend < 0 ? rows.length : backend + 1, 0, session);
+    setKids(list, rows);
   };
   const refresh = () => {
     if (busy) return;
     busy = true;
     sum.textContent = t("common.checking");
     host.doctor().then((checks) => { paint(checks); o.changed(checks); }, (e) => {
-      setKids(list, h("div.vempty", { role: "alert" }, icon("warn"), h("div.vempty__t", null, t("status.checkFailed")), h("div.vempty__d", null, errMessage(e))));
+      setKids(list, h("div.vempty", { role: "alert" }, icon("warn"), h("div.vempty__t", null, t("status.checkFailed")), h("div.vempty__d", null, errMessage(e))), session);
       sum.textContent = "";
     }).finally(() => { busy = false; });
   };
   if (o.initial) paint(o.initial);
+  render();
   const recheck = h("button.btn.btn--sm", { type: "button", onclick: () => refresh() }, icon("retry"), t("common.recheck"));
   const el = frame(t("status.title"), o.back, h("div.status__top", null, sum, recheck), list);
-  return { el, refresh };
+  return { el, refresh, render };
 }
 

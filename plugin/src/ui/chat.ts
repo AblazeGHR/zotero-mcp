@@ -88,6 +88,12 @@ export class Chat {
     return this.session?.backend ?? (this.resume?.agentSessionId ? this.resume.backend : this.d.host.getSettings().backend);
   }
 
+  /** Null for other agents; an empty string while the current Codex chat has no native ID. */
+  get codexSessionId(): string | null {
+    if (this.backend !== "codex") return null;
+    return this.session?.sessionId ?? (this.saved?.backend === "codex" ? this.saved.agentSessionId : undefined) ?? "";
+  }
+
   async ensureSession(): Promise<AgentSession> {
     if (this.session) return this.session;
     if (this.starting) return this.starting;

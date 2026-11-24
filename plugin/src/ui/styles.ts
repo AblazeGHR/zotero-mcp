@@ -340,6 +340,8 @@ const BASE = `
 .zmc .check__tx { flex: 1; min-width: 0; }
 .zmc .check__t { font-weight: 500; line-height: 1.4; }
 .zmc .check__d { font-size: var(--fs-2); color: var(--ink-muted); overflow-wrap: anywhere; }
+.zmc .status__session { align-items: center; }
+.zmc .status__session-id { user-select: text; }
 .zmc .check__help { margin: var(--s2) 0 0; font-size: var(--fs-2); color: var(--ink-muted); line-height: 1.5; }
 .zmc .check__acts { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s2); }
 .zmc .keyrow { display: grid; gap: var(--s1); }

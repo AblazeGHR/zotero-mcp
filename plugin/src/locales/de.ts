@@ -76,6 +76,9 @@ const de: Catalog = {
   "status.badSr": " (braucht Aufmerksamkeit)",
   "status.checkFailed": "Die Prüfung selbst ist fehlgeschlagen",
   "status.title": "Status",
+  "sessionId.title": "Codex-Sitzungs-ID",
+  "sessionId.copy": "Codex-Sitzungs-ID kopieren",
+  "sessionId.pending": "Noch nicht erstellt",
   // welcome
   "welcome.claude.sub": "Anthropic. Nutzt Ihr Claude-Abo.",
   "welcome.claude.signIn": "Führen Sie `claude` in einem Terminal aus und melden Sie sich mit /login an.",

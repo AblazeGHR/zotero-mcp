@@ -55,6 +55,44 @@ await test("Codex models open from cache while a refresh is pending", async (p) 
   await models.getByRole("menuitemradio", { name: /New Codex/ }).waitFor({ timeout: 3000 });
 });
 
+await test("status and history copy the native Codex session ID", async (p) => {
+  await sim(p, async () => {
+    window.__copied = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async (text) => { window.__copied.push(text); } }, configurable: true,
+    });
+    const { host, sim } = window.__zmc;
+    sim.statuses.find((status) => status.id === "codex").available = true;
+    await host.setSettings({ backend: "codex" });
+  });
+  const status = p.locator(".stat");
+  const session = p.locator(".status__session");
+  const button = (scope) => scope.getByRole("button", { name: "Copy Codex session ID" });
+  await status.click();
+  assert.equal(await session.locator(".status__session-id").innerText(), "Not created yet");
+  assert.equal(await button(session).count(), 0);
+  await status.click();
+  await send(p, "Start a Codex chat");
+  await done(p);
+  await status.click();
+  const liveId = await session.locator(".status__session-id").innerText();
+  assert.match(liveId, /^agent-.+/);
+  await button(session).click();
+
+  const history = p.getByRole("button", { name: "History", exact: true });
+  await history.click();
+  const codex = p.locator(".hrow", { hasText: "Which papers cite Pager" });
+  await button(codex).click();
+  assert.equal(await p.locator(".hrow").filter({ hasText: "Claude Code" }).locator(".session-id-copy").count(), 0);
+  await codex.locator(".hrow__main").click();
+  await p.waitForSelector(".cin");
+  await status.click();
+  assert.equal(await session.locator(".status__session-id").innerText(), "agent-s2");
+  await button(session).click();
+  await p.waitForFunction(() => window.__copied.length === 3);
+  assert.deepEqual(await sim(p, () => window.__copied), [liveId, "agent-s2", "agent-s2"]);
+}, { width: 300 });
+
 await test("enter sends, shift+enter adds a line, the draft clears", async (p) => {
   await p.locator(".cin").fill("line one");
   await p.locator(".cin").press("Shift+Enter");

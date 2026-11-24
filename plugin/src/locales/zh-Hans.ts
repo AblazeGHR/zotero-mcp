@@ -76,6 +76,9 @@ const zhHans: Catalog = {
   "status.badSr": "（需要处理）",
   "status.checkFailed": "检查本身出错了",
   "status.title": "状态",
+  "sessionId.title": "Codex 会话 ID",
+  "sessionId.copy": "复制 Codex 会话 ID",
+  "sessionId.pending": "尚未创建",
   // welcome
   "welcome.claude.sub": "来自 Anthropic，使用您的 Claude 订阅。",
   "welcome.claude.signIn": "在终端中运行 `claude`，然后用 /login 登录。",

@@ -76,6 +76,9 @@ const zhHant: Catalog = {
   "status.badSr": "（需要處理）",
   "status.checkFailed": "檢查本身發生錯誤",
   "status.title": "狀態",
+  "sessionId.title": "Codex 工作階段 ID",
+  "sessionId.copy": "複製 Codex 工作階段 ID",
+  "sessionId.pending": "尚未建立",
   // welcome
   "welcome.claude.sub": "來自 Anthropic，使用您的 Claude 訂閱。",
   "welcome.claude.signIn": "在終端機執行 `claude`，再以 /login 登入。",
