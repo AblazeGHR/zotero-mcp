@@ -28,6 +28,7 @@ export interface RuntimeOpts {
 }
 
 const nodeMissing = () => t("agent.nodeMissing");
+const CODEX_MODELS_TTL_MS = 60_000;
 
 /**
  * Remove a probe's temp workspace, and the empty project folder Claude Code makes for it under ~/.claude/projects
@@ -99,7 +100,7 @@ export function createRuntime(opts: RuntimeOpts): AgentRuntime {
   }
 
   type Auth = NonNullable<StartOpts["auth"]>;
-  const codexReads = new Map<Auth, Promise<CodexModelOption[]>>();
+  const codexReads = new Map<Auth, { reading: Promise<CodexModelOption[]>; expiresAt: number }>();
 
   async function probeCodexModels(auth: Auth): Promise<CodexModelOption[]> {
     const login = await spawner.baseEnv();
@@ -203,12 +204,18 @@ export function createRuntime(opts: RuntimeOpts): AgentRuntime {
 
   const runtime: AgentRuntime = {
     codexModels(auth) {
-      let reading = codexReads.get(auth);
-      if (!reading) {
-        reading = probeCodexModels(auth).finally(() => codexReads.delete(auth));
-        codexReads.set(auth, reading);
-      }
-      return reading;
+      const cached = codexReads.get(auth);
+      if (cached && Date.now() < cached.expiresAt) return cached.reading;
+      const entry = { reading: probeCodexModels(auth), expiresAt: Infinity };
+      entry.reading = entry.reading.then((models) => {
+        entry.expiresAt = Date.now() + CODEX_MODELS_TTL_MS;
+        return models;
+      }, (error: unknown) => {
+        codexReads.delete(auth);
+        throw error;
+      });
+      codexReads.set(auth, entry);
+      return entry.reading;
     },
 
     catalog(id: BackendId): Promise<Catalog> {

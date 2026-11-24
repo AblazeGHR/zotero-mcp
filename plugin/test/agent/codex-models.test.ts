@@ -4,11 +4,13 @@ import { createRuntime } from "../../src/agent/runtime.ts";
 import { BACKENDS } from "../../src/agent/backends.ts";
 import type { Spawner } from "../../src/types.ts";
 
-it("queries Codex without creating a thread, shares concurrent reads and refreshes the next menu", async () => {
+it("queries Codex without creating a thread and shares reads until the cache expires", async (t) => {
   const launches: { command: string; args: string[]; env: Record<string, string> }[] = [];
   const requests: string[] = [];
   let kills = 0;
   let fail = false;
+  let now = 1_000_000;
+  t.mock.method(Date, "now", () => now);
   const nodePath = "C:\\Node\\node.exe";
   const local = "C:\\npm\\vendor\\codex.exe";
   const bundled = "C:\\bridges\\codex.js";
@@ -68,6 +70,9 @@ it("queries Codex without creating a thread, shares concurrent reads and refresh
   assert.deepEqual(launches[0]!.args, ["app-server"]);
   assert.equal(launches[0]!.env.OPENAI_API_KEY, undefined);
   assert.equal(kills, 1);
+  now += 59_999;
+  assert.strictEqual(read("subscription"), first);
+  assert.equal(launches.length, 1);
 
   fail = true;
   await assert.rejects(read("api-key"), /catalog unavailable/);
@@ -75,4 +80,11 @@ it("queries Codex without creating a thread, shares concurrent reads and refresh
   fail = false;
   assert.equal((await read("api-key"))[0]!.id, "model-3");
   assert.equal(kills, 3);
+  now++;
+  const refreshed = read("subscription");
+  assert.notStrictEqual(refreshed, first);
+  assert.strictEqual(read("subscription"), refreshed);
+  assert.equal((await refreshed)[0]!.id, "model-4");
+  assert.equal((await read("api-key"))[0]!.id, "model-3");
+  assert.equal(kills, 4);
 });

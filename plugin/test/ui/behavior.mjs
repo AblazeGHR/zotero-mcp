@@ -33,6 +33,28 @@ const OVERFLOW = () => {
   return [...new Set(out)];
 };
 
+await test("Codex models open from cache while a refresh is pending", async (p) => {
+  await sim(p, async () => {
+    const { host, sim } = window.__zmc;
+    sim.statuses.find((status) => status.id === "codex").available = true;
+    const pending = new Promise((resolve) => {
+      window.__finishModelRefresh = () => resolve([{ id: "new-codex", name: "New Codex", levels: ["medium"] }]);
+    });
+    host.runtime.codexModels = () => pending;
+    await host.setSettings({ backend: "codex" });
+  });
+  await p.locator(".pick--model").click();
+  const models = p.locator(".mdd .mdd__models");
+  await models.getByRole("menuitemradio").first().waitFor({ timeout: 3000 });
+  assert.doesNotMatch(await models.innerText(), /New Codex/);
+
+  await sim(p, () => window.__finishModelRefresh());
+  assert.doesNotMatch(await models.innerText(), /New Codex/, "keep the open menu stable");
+  await p.locator(".pick--model").click();
+  await p.locator(".pick--model").click();
+  await models.getByRole("menuitemradio", { name: /New Codex/ }).waitFor({ timeout: 3000 });
+});
+
 await test("enter sends, shift+enter adds a line, the draft clears", async (p) => {
   await p.locator(".cin").fill("line one");
   await p.locator(".cin").press("Shift+Enter");

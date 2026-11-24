@@ -396,13 +396,18 @@ class Panel {
 
   private async loadChoices(picker: "model" | "mode"): Promise<Choices> {
     const settings = this.host.getSettings();
-    await this.loadCatalog(true);
-    const runtime = this.host.runtime;
-    if (picker === "model" && settings.backend === "codex" && runtime.codexModels) {
-      const auth = settings.auth.codex ?? "subscription";
-      const models = await runtime.codexModels(auth);
+    const readModels = this.host.runtime.codexModels;
+    if (picker !== "model" || settings.backend !== "codex" || !readModels) {
+      await this.loadCatalog(true);
+      return this.choices();
+    }
+    await this.loadCatalog(false);
+    const auth = settings.auth.codex ?? "subscription";
+    const choices = this.choices();
+    const refresh = async () => {
+      const models = await readModels(auth);
       const now = this.host.getSettings();
-      if (now.backend !== "codex" || (now.auth.codex ?? "subscription") !== auth) return this.choices();
+      if (now.backend !== "codex" || (now.auth.codex ?? "subscription") !== auth) return;
       const session = this.chat.session;
       const catalog = this.catalogs.get("codex");
       if (session?.backend === "codex") {
@@ -413,7 +418,14 @@ class Panel {
         if (current && !offered.some((m) => m.id === current.id)) offered.unshift(current);
         this.catalogs.set("codex", { ...catalog, models: offered });
       }
+    };
+    if (choices.backend === "codex" && choices.models.length) {
+      // Keep the open menu stable while someone is searching or choosing a model.
+      void refresh().catch(() => {});
+      return choices;
     }
+    await this.loadCatalog(true);
+    await refresh();
     return this.choices();
   }
 
