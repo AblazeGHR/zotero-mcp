@@ -30,7 +30,7 @@ export interface ComposerOpts {
   onPasteImages(files: File[]): void;
   onPick(kind: PickKind, id: string): void;
   /** The agent's models and modes. May start the agent, so it is asked only when a picker opens. */
-  loadChoices(): Promise<Choices>;
+  loadChoices(picker: "model" | "mode"): Promise<Choices>;
   /** New chats use another agent; a chat with messages is replaced by a new one (the picker asked first). */
   switchAgent(id: BackendId): Promise<void>;
   hasMessages(): boolean;
@@ -88,7 +88,7 @@ export class Composer {
     this.el = h("div.composer");
     this.slash = new SlashMenu(this.el, () => opts.slashItems(), (it) => this.pickSlash(it));
     this.slash.onActive = active;
-    this.pickers = new Pickers(this.el, { load: () => opts.loadChoices(), pick: (k, id) => opts.onPick(k, id), switchAgent: (id) => opts.switchAgent(id), hasMessages: () => opts.hasMessages(), checkSetup: () => opts.checkSetup() });
+    this.pickers = new Pickers(this.el, { load: (picker) => opts.loadChoices(picker), pick: (k, id) => opts.onPick(k, id), switchAgent: (id) => opts.switchAgent(id), hasMessages: () => opts.hasMessages(), checkSetup: () => opts.checkSetup() });
     this.sendBtn = h("button.send", { type: "button", "aria-label": t("keys.send"), title: t("composer.sendTip", { keys: "Enter" }), onclick: () => this.send() }, icon("send")) as HTMLButtonElement;
 
     this.ring = new ContextRing(this.el, { info: () => opts.contextInfo(), newChat: () => opts.onNewChat(), compact: () => opts.onCompact(), opening: () => { this.pickers.close(); this.pop.close(); } });

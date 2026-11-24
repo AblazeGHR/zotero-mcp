@@ -9,7 +9,7 @@
 // - An agent->client request that goes unanswered stalls the agent: permission requests are answered
 //   through respondPermission(), cancel() answers all pending ones "cancelled", close() too.
 // - The model is sent explicitly after session/new / session/load (a bridge's default may be old).
-import type { AgentSession, BackendId, ChatEvent, ModeOption, ModelOption, PermissionOption, PromptInput, StartOpts, ToolKind, ToolStatus, Usage } from "../types.ts";
+import type { AgentSession, BackendId, ChatEvent, CodexModelOption, ModeOption, ModelOption, PermissionOption, PromptInput, StartOpts, ToolKind, ToolStatus, Usage } from "../types.ts";
 import type { AcpClient, InitializeResult } from "./acp.ts";
 import type { BackendSpec } from "./backends.ts";
 import { withBrief } from "./brief.ts";
@@ -363,6 +363,21 @@ export class AcpAgentSession implements AgentSession {
   models(): ModelOption[] {
     return this.#catalog.models;
   }
+
+  updateCodexModels(models: CodexModelOption[]): void {
+    if (this.#spec.effortVia !== "model-suffix") return;
+    const c = this.#catalog;
+    const current = c.models.find((m) => m.id === c.currentModel);
+    const levels = new Map(models.map((m) => [m.id, m.levels]));
+    c.models = models.map(({ levels: _, ...model }) => model);
+    // The active model can be absent from model/list, e.g. a configured model on a custom provider.
+    if (current && !levels.has(current.id)) {
+      c.models.unshift(current);
+      levels.set(current.id, c.levels?.get(current.id) ?? []);
+    }
+    c.levels = levels;
+    c.efforts = [...new Set([...levels.values()].flat())].map((id) => ({ id, name: id }));
+  }
   currentModel(): string | undefined {
     return this.#catalog.currentModel;
   }
@@ -437,6 +452,7 @@ export class AcpAgentSession implements AgentSession {
         }
         if (this.#spec.effortVia === "model-suffix") {
           if (target.level) this.#catalog.currentEffort = target.level;
+          else delete this.#catalog.currentEffort;
         } else if (prevEffort && this.#catalog.currentEffort !== prevEffort && this.#catalog.efforts.some((e) => e.id === prevEffort)) {
           // A bridge may reset the effort on a model change; keep the user's when the new model has it.
           await this.setEffort(prevEffort).catch(() => undefined);

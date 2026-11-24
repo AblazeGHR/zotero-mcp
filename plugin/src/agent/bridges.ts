@@ -5,6 +5,7 @@
 import type { Spawner } from "../types.ts";
 import type { BridgeSpec } from "./backends.ts";
 import { dirnameOf, findBinary, withPathFirst } from "./env.ts";
+import { shimTarget } from "./windows.ts";
 
 export interface BridgeLocation {
   /** The bridge's JS entry (its package.json `bin`), absolute. */
@@ -65,17 +66,48 @@ export function atLeast(a: string, b: string): boolean {
   return true;
 }
 
+const WINDOWS_CODEX_SCRIPT = `
+const { existsSync, realpathSync, statSync } = require("node:fs");
+const path = require("node:path");
+const { createRequire } = require("node:module");
+const targets = { x64: "x86_64-pc-windows-msvc", arm64: "aarch64-pc-windows-msvc" };
+const target = targets[process.arch];
+if (!target) process.exit(1);
+const launcher = realpathSync(process.argv[1]);
+const platform = "@openai/codex-win32-" + process.arch;
+let pkg = path.join(path.dirname(launcher), "..");
+try {
+  pkg = path.dirname(createRequire(launcher).resolve(platform + "/package.json"));
+} catch {}
+const exe = path.join(pkg, "vendor", target, "bin", "codex.exe");
+if (existsSync(exe) && statSync(exe).isFile()) console.log(exe);
+`;
+
+async function windowsCodexExecutable(spawner: Spawner, env: Record<string, string>, node: string, shim: string): Promise<string | null> {
+  const opts = { env, timeoutMs: 15_000 };
+  const source = await spawner.run(node, ["-e", 'process.stdout.write(require("node:fs").readFileSync(process.argv[1], "utf8"))', shim], opts);
+  const target = source.code === 0 ? shimTarget(source.stdout) : null;
+  if (!target || !/(?:^|\\)@openai\\codex\\bin\\codex\.js$/i.test(target)) return null;
+  const found = await spawner.run(node, ["-e", WINDOWS_CODEX_SCRIPT, `${dirnameOf(shim)}\\${target}`], opts);
+  const exe = found.stdout.trim();
+  return found.code === 0 && /^[A-Za-z]:[\\/][^\r\n]+\.exe$/i.test(exe) ? exe : null;
+}
+
 /**
  * The user's own Codex, when chats should run it instead of the bridge's bundled one: when it is at least as new
  * (#811: a config.toml written for a newer Codex fails to load in the older bundled one, as "failed to load
- * workspace requirements"). codex-acp runs it through CODEX_PATH. An older or unversioned Codex, or on Windows
- * anything but an .exe (CODEX_PATH is launched directly, so npm's .cmd shim would not start), keeps the bundled one.
+ * workspace requirements"). codex-acp runs it through CODEX_PATH. On Windows, resolve an npm shim to the native
+ * executable from its own package. An older, unversioned or unresolvable Codex keeps the bundled one.
  */
-export async function systemCodexForChats(spawner: Spawner, env: Record<string, string>, cli: string | null, bundled: { version: string } | null): Promise<string | null> {
-  if (!cli || !bundled?.version || (spawner.windows && !/\.exe$/i.test(cli))) return null;
+export async function systemCodexForChats(spawner: Spawner, env: Record<string, string>, node: string, cli: string | null, bundled: { version: string } | null): Promise<string | null> {
+  if (!cli || !bundled?.version) return null;
   try {
-    const r = await spawner.run(cli, ["--version"], { env, timeoutMs: 15_000 });
-    return r.code === 0 && atLeast(r.stdout, bundled.version) ? cli : null;
+    const exe = spawner.windows && !/\.exe$/i.test(cli)
+      ? await windowsCodexExecutable(spawner, env, node, cli)
+      : cli;
+    if (!exe) return null;
+    const r = await spawner.run(exe, ["--version"], { env, timeoutMs: 15_000 });
+    return r.code === 0 && atLeast(r.stdout, bundled.version) ? exe : null;
   } catch {
     return null;
   }

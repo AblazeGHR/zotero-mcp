@@ -101,6 +101,7 @@ export interface CustomAgentConfig {
 }
 
 export interface ModelOption { id: string; name: string; description?: string }
+export interface CodexModelOption extends ModelOption { levels: string[] }
 export interface ModeOption { id: string; name: string; description?: string }
 
 /** Whether a backend can run here, as `detect()` measured it. `reason` is shown to the user when it cannot. */
@@ -159,6 +160,7 @@ export interface AgentSession {
   readonly account?: string;
   readonly supportsImages: boolean;
   models(): ModelOption[];
+  updateCodexModels?(models: CodexModelOption[]): void;
   currentModel(): string | undefined;
   /** The model the agent started this session on by itself, before any explicit choice (unknown after a resume). */
   defaultModel(): string | undefined;
@@ -200,6 +202,8 @@ export interface AgentRuntime {
   start(opts: StartOpts): Promise<AgentSession>;
   /** The backend's models, modes and efforts. Cached after the first call (which starts a short-lived bridge). */
   catalog(backend: BackendId): Promise<Catalog>;
+  /** Read Codex's current model list without starting a conversation. */
+  codexModels?(auth: NonNullable<StartOpts["auth"]>): Promise<CodexModelOption[]>;
   /** The catalog if it is known without starting anything (a session said it, this run or an earlier one); undefined otherwise. */
   cached?(backend: BackendId): Promise<Catalog | undefined>;
 }

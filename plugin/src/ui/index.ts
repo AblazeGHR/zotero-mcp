@@ -141,7 +141,7 @@ class Panel {
       onRemoveChip: (c) => { this.chips.remove(c); this.refreshChips(); },
       onTogglePin: (c) => { this.chips.togglePin(c); this.refreshChips(); },
       onPick: (kind, id) => void this.pick(kind, id),
-      loadChoices: async () => { await this.loadCatalog(true); return this.choices(); },
+      loadChoices: (picker) => this.loadChoices(picker),
       switchAgent: (id) => this.switchAgent(id),
       hasMessages: () => this.chat.tr.messages.length > 0,
       onFirstFocus: () => { if (!this.chat.session && !this.chat.starting && !this.health.blockReason()) void this.chat.ensureSession().catch(() => {}); },
@@ -393,6 +393,29 @@ class Panel {
   }
 
   private syncPickers(): void { this.composer.setChoices(this.choices()); }
+
+  private async loadChoices(picker: "model" | "mode"): Promise<Choices> {
+    const settings = this.host.getSettings();
+    await this.loadCatalog(true);
+    const runtime = this.host.runtime;
+    if (picker === "model" && settings.backend === "codex" && runtime.codexModels) {
+      const auth = settings.auth.codex ?? "subscription";
+      const models = await runtime.codexModels(auth);
+      const now = this.host.getSettings();
+      if (now.backend !== "codex" || (now.auth.codex ?? "subscription") !== auth) return this.choices();
+      const session = this.chat.session;
+      const catalog = this.catalogs.get("codex");
+      if (session?.backend === "codex") {
+        session.updateCodexModels?.(models);
+      } else if (catalog) {
+        const offered = models.map(({ levels: _, ...model }) => model);
+        const current = catalog.models.find((m) => m.id === catalog.model);
+        if (current && !offered.some((m) => m.id === current.id)) offered.unshift(current);
+        this.catalogs.set("codex", { ...catalog, models: offered });
+      }
+    }
+    return this.choices();
+  }
 
   /** The chosen backend's models, modes and efforts. `strict`: let a failure reach the caller (a picker menu shows it). */
   private async loadCatalog(strict: boolean): Promise<void> {

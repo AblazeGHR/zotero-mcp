@@ -23,7 +23,7 @@ export type PickKind = "model" | "effort" | "mode";
 
 interface PickerOpts {
   /** The backend's choices; may start the agent or wait for its catalog. */
-  load(): Promise<Choices>;
+  load(picker: "model" | "mode"): Promise<Choices>;
   pick(kind: PickKind, id: string): void;
   /** New chats use this agent from now on; the current chat is replaced by a new one if it has messages. */
   switchAgent(id: BackendId): Promise<void>;
@@ -206,7 +206,7 @@ export class Pickers {
     if (focusCurrent) this.focusAgent(this.choices.backend);
     let c: Choices;
     try {
-      c = await this.opts.load();
+      c = await this.opts.load("model");
     } catch (e) {
       if (gen !== this.gen) return;
       setKids(body, h("div.menu__note.menu__note--bad", null, t("pick.loadFailed", { error: errMessage(e) })),
@@ -403,7 +403,7 @@ export class Pickers {
     this.place();
     let c: Choices;
     try {
-      c = await this.opts.load();
+      c = await this.opts.load("mode");
     } catch (e) {
       if (this.menu !== menu) return;
       setKids(menu, h("div.menu__note.menu__note--bad", null, t("pick.loadFailed", { error: errMessage(e) })),

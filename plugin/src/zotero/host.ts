@@ -35,7 +35,10 @@ export function createHost(opts: { id: string; version: string; win: any; dataDi
   const spawner = createGeckoSpawner();
   const context = new ContextTracker(opts.id);
   context.start(win);
-  const base = createRuntime({ spawner, bridgeDir: PathUtils.join(dataDir, "bridges"), customAgent: () => settings().customAgent });
+  const base = createRuntime({
+    spawner, bridgeDir: PathUtils.join(dataDir, "bridges"), customAgent: () => settings().customAgent,
+    codexApiKey: () => keychain.getApiKey("codex"),
+  });
   const known = new Map<BackendId, Catalog>();
   // What each backend offers (models, modes, efforts), as its sessions said, kept across runs: the pickers show it when
   // the panel opens without an agent being started to ask. A bridge of another version is asked again (by the first chat).

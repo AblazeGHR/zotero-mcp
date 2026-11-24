@@ -1,11 +1,12 @@
 // createRuntime: detect which backends can run here, and start a session on one.
 // Process spawning is injected (Spawner); this file has no node:*, DOM or Zotero imports.
-import type { AgentRuntime, AgentSession, BackendId, BackendStatus, Catalog, CustomAgentConfig, Spawner, StartOpts } from "../types.ts";
+import type { AgentRuntime, AgentSession, BackendId, BackendStatus, Catalog, CodexModelOption, CustomAgentConfig, Spawner, StartOpts } from "../types.ts";
 import { readCustomAgent } from "../custom-agent.ts";
 import { AcpClient } from "./acp.ts";
 import { ResumeError } from "./jsonrpc.ts";
 import { BACKENDS, BACKEND_IDS, backendOf, findClaudeExecutable, findCli, isNative, probeLogin, type BackendSpec } from "./backends.ts";
-import { ensureBridge, locateBridge, locateBundledCodex, systemCodexForChats } from "./bridges.ts";
+import { ensureBridge, locateBridge, locateBundledCodex, systemCodexForChats, type BridgeLocation } from "./bridges.ts";
+import { readCodexModels } from "./codex-models.ts";
 import { bridgeEnv, dirnameOf, findBinary, nodeEval, stripApiKeys, withPathFirst } from "./env.ts";
 import { AcpAgentSession } from "./session.ts";
 import { t } from "../i18n.ts";
@@ -22,6 +23,8 @@ export interface RuntimeOpts {
   onProgress?: (message: string) => void;
   /** Read at each launch so a changed command never reuses the old catalog. */
   customAgent?: () => CustomAgentConfig | undefined;
+  /** The host's saved credential for a Codex model list in API-key mode. */
+  codexApiKey?: () => Promise<string | null>;
 }
 
 const nodeMissing = () => t("agent.nodeMissing");
@@ -88,6 +91,34 @@ export function createRuntime(opts: RuntimeOpts): AgentRuntime {
     return opts.nodePath ?? (await findBinary(spawner, env, "node"));
   }
 
+  async function codexExecutables(env: Record<string, string>, node: string, bridge: BridgeLocation, cli: string | null) {
+    const nodeEnv = withPathFirst(env, dirnameOf(node));
+    const bundled = await locateBundledCodex(spawner, nodeEnv, node, bridge);
+    const own = env.CODEX_PATH || await systemCodexForChats(spawner, nodeEnv, node, cli, bundled);
+    return { own, bundled };
+  }
+
+  type Auth = NonNullable<StartOpts["auth"]>;
+  const codexReads = new Map<Auth, Promise<CodexModelOption[]>>();
+
+  async function probeCodexModels(auth: Auth): Promise<CodexModelOption[]> {
+    const login = await spawner.baseEnv();
+    const spec = BACKENDS.codex;
+    const env = auth === "subscription" ? stripApiKeys(login, spec.apiKeyVars) : login;
+    const node = await resolveNode(env);
+    if (!node) throw new Error(nodeMissing());
+    const bridge = await ensureBridge({ spawner, env, node, bridgeDir, spec, ...(opts.onProgress ? { onProgress: opts.onProgress } : {}) });
+    const { own, bundled } = await codexExecutables(env, node, bridge, await findCli(spawner, env, spec));
+    if (!own && !bundled) throw new Error("Could not locate Codex to read its model list");
+    const key = auth === "api-key" ? await opts.codexApiKey?.() : null;
+    return readCodexModels({
+      spawner, command: own || node, args: own ? ["app-server"] : [bundled!.entry, "app-server"],
+      cwd: env.HOME || env.USERPROFILE || bridgeDir,
+      env: bridgeEnv(env, { node, ...(key ? { extra: { OPENAI_API_KEY: key } } : {}) }),
+      ...(opts.initTimeoutMs !== undefined ? { initTimeoutMs: opts.initTimeoutMs } : {}),
+    });
+  }
+
   const catalogs = new Map<BackendId, Promise<Catalog>>();
 
   /** A short-lived session in a temp workspace, read and closed. Nothing is left running; Claude is asked not to keep the session, the others cannot be. */
@@ -147,7 +178,7 @@ export function createRuntime(opts: RuntimeOpts): AgentRuntime {
         // bundled one; either Codex can be killed while the other works (#797), so a probe that could not tell
         // never hides a successful one.
         const found = id === "codex" && installed ? await locateBundledCodex(spawner, nodeEnv, node, installed) : null;
-        const own = found ? await systemCodexForChats(spawner, nodeEnv, cli, found) : null;
+        const own = found ? await systemCodexForChats(spawner, nodeEnv, node, cli, found) : null;
         const bundled = found && !own ? found.entry : null;
         let login = bundled ? await probeLogin(spawner, nodeEnv, id, node, [bundled]) : {};
         if (cli && (!bundled || (login.loggedIn !== true && !login.configError && (login.reason || login.loggedIn === undefined)))) {
@@ -171,6 +202,15 @@ export function createRuntime(opts: RuntimeOpts): AgentRuntime {
   }
 
   const runtime: AgentRuntime = {
+    codexModels(auth) {
+      let reading = codexReads.get(auth);
+      if (!reading) {
+        reading = probeCodexModels(auth).finally(() => codexReads.delete(auth));
+        codexReads.set(auth, reading);
+      }
+      return reading;
+    },
+
     catalog(id: BackendId): Promise<Catalog> {
       if (id === "custom") return probeCatalog(id);
       let p = catalogs.get(id);
@@ -222,11 +262,9 @@ export function createRuntime(opts: RuntimeOpts): AgentRuntime {
         spec.claudeMeta ? findClaudeExecutable(spawner, withPathFirst(env, dirnameOf(node)), node) : null,
       ]);
       const extra: Record<string, string> = { ...start.env, ...(start.locked ? await lockedEnv(spawner, env, spec, start) : {}) };
-      if (start.backend === "codex" && !extra.CODEX_PATH) {
+      if (start.backend === "codex" && !extra.CODEX_PATH && !env.CODEX_PATH) {
         // Chats run the user's own Codex when it is at least as new as the bridge's (#811); see systemCodexForChats.
-        const nodeEnv = withPathFirst(env, dirnameOf(node));
-        const found = await locateBundledCodex(spawner, nodeEnv, node, bridge);
-        const own = found ? await systemCodexForChats(spawner, nodeEnv, await findCli(spawner, env, spec), found) : null;
+        const { own } = await codexExecutables(env, node, bridge, await findCli(spawner, env, spec));
         if (own) extra.CODEX_PATH = own;
       }
       const childEnv = bridgeEnv(env, { claudeExecutable: claude, node, extra });
